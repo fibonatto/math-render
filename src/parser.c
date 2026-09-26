@@ -1,14 +1,27 @@
 #include "parser.h"
 #include "lexer.h"
 
-#include <stdio.h>
-#include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 
 typedef struct {
     Lexer lexer;
     Token current;
 } Parser;
+
+typedef Ast *(*AtomParser)(Parser *);
+typedef Ast *(*CommandParser)(Parser *);
+
+typedef struct {
+    const char *name;
+    CommandParser parser;
+    const char *value;
+} CommandRule;
+
+typedef struct {
+    TokenType type;
+    AtomParser parser;
+} AtomRule;
 
 static void advance(Parser *parser)
 {
@@ -17,143 +30,156 @@ static void advance(Parser *parser)
 }
 
 static Ast *parse_expression(Parser *parser);
+static Ast *parse_atom(Parser *parser);
+
+static Ast *parse_text(Parser *parser)
+{
+    Ast *node = ast_text(parser->current.value);
+    advance(parser);
+
+    return node;
+}
+
+static Ast *parse_operator(Parser *parser)
+{
+    Ast *node = ast_text(parser->current.value);
+    advance(parser);
+
+    return node;
+}
+
+static Ast *parse_group(Parser *parser)
+{
+    advance(parser);
+
+    Ast *node = parse_expression(parser);
+
+    if (parser->current.type == TOKEN_RBRACE)
+        advance(parser);
+
+    return node;
+}
+
+static Ast *parse_parentheses(Parser *parser)
+{
+    Ast *node = ast_sequence();
+
+    ast_add(node, ast_text("("));
+
+    advance(parser);
+
+    Ast *inside = parse_expression(parser);
+
+    if (inside != NULL)
+        ast_add(node, inside);
+
+    if (parser->current.type == TOKEN_RPAREN) {
+        ast_add(node, ast_text(")"));
+        advance(parser);
+    }
+
+    return node;
+}
+
+static Ast *parse_frac(Parser *parser)
+{
+    advance(parser);
+
+    Ast *numerator = parse_atom(parser);
+
+    if (numerator == NULL)
+        return ast_text("\\frac");
+
+    Ast *denominator = parse_atom(parser);
+
+    if (denominator == NULL) {
+        ast_free(numerator);
+        return ast_text("\\frac");
+    }
+
+    return ast_binary(
+        AST_FRACTION,
+        numerator,
+        denominator
+    );
+}
+
+static Ast *parse_sum(Parser *parser)
+{
+    advance(parser);
+
+    return ast_new(AST_SUM);
+}
+
+static Ast *parse_int(Parser *parser)
+{
+    advance(parser);
+
+    return ast_new(AST_INT);
+}
+
+static Ast *parse_symbol(Parser *parser, const char *value)
+{
+    Ast *node = ast_text(value);
+    advance(parser);
+
+    return node;
+}
+
+static const CommandRule command_rules[] = {
+    {"frac",       parse_frac, NULL},
+    {"sum",        parse_sum,  NULL},
+    {"int",        parse_int,  NULL},
+
+    {"alpha",      NULL, "α"},
+    {"beta",       NULL, "β"},
+    {"gamma",      NULL, "γ"},
+    {"delta",      NULL, "δ"},
+    {"pi",         NULL, "π"},
+    {"infty",      NULL, "∞"},
+    {"leq",        NULL, "≤"},
+    {"geq",        NULL, "≥"},
+    {"neq",        NULL, "≠"},
+    {"times",      NULL, "×"},
+    {"cdot",       NULL, "·"},
+    {"rightarrow", NULL, "→"},
+};
+
+static Ast *parse_command(Parser *parser)
+{
+    const char *name = parser->current.value;
+    size_t count = sizeof(command_rules) / sizeof(command_rules[0]);
+
+    for (size_t i = 0; i < count; i++) {
+        const CommandRule *rule = &command_rules[i];
+
+        if (strcmp(rule->name, name) != 0)
+            continue;
+
+        if (rule->value != NULL)
+            return parse_symbol(parser, rule->value);
+
+        return rule->parser(parser);
+    }
+
+    return parse_symbol(parser, name);
+}
+
+static const AtomRule atom_rules[] = {
+    {TOKEN_TEXT,     parse_text},
+    {TOKEN_OPERATOR, parse_operator},
+    {TOKEN_LBRACE,   parse_group},
+    {TOKEN_LPAREN,   parse_parentheses},
+    {TOKEN_COMMAND,  parse_command},
+};
 
 static Ast *parse_atom(Parser *parser)
 {
-    Token *token = &parser->current;
+    size_t count = sizeof(atom_rules) / sizeof(atom_rules[0]);
 
-    if (token->type == TOKEN_TEXT) {
-        Ast *node = ast_text(token->value);
-        advance(parser);
-        return node;
-    }
-
-	if (token->type == TOKEN_OPERATOR) {
-		Ast *node = ast_text(token->value);
-		advance(parser);
-		return node;
-	}
-
-    if (token->type == TOKEN_LBRACE) {
-        advance(parser);
-
-        Ast *node = parse_expression(parser);
-
-        if (parser->current.type == TOKEN_RBRACE)
-            advance(parser);
-
-        return node;
-    }
-
-    if (token->type == TOKEN_LPAREN) {
-        Ast *node = ast_sequence();
-
-        ast_add(node, ast_text("("));
-
-        advance(parser);
-
-        Ast *inside = parse_expression(parser);
-        ast_add(node, inside);
-
-        if (parser->current.type == TOKEN_RPAREN) {
-            ast_add(node, ast_text(")"));
-            advance(parser);
-        }
-
-        return node;
-    }
-
-    if (token->type == TOKEN_COMMAND) {
-        const char *command = token->value;
-
-        if (strcmp(command, "frac") == 0) {
-            advance(parser);
-
-            Ast *numerator = parse_atom(parser);
-            Ast *denominator = parse_atom(parser);
-
-            return ast_binary(
-                AST_FRACTION,
-                numerator,
-                denominator
-            );
-        }
-
-        if (strcmp(command, "sum") == 0) {
-            advance(parser);
-
-            return ast_new(AST_SUM);
-        }
-
-        if (strcmp(command, "int") == 0) {
-            advance(parser);
-
-            return ast_new(AST_INT);
-        }
-
-        if (strcmp(command, "alpha") == 0) {
-            advance(parser);
-            return ast_text("α");
-        }
-
-        if (strcmp(command, "beta") == 0) {
-            advance(parser);
-            return ast_text("β");
-        }
-
-        if (strcmp(command, "gamma") == 0) {
-            advance(parser);
-            return ast_text("γ");
-        }
-
-        if (strcmp(command, "delta") == 0) {
-            advance(parser);
-            return ast_text("δ");
-        }
-
-        if (strcmp(command, "pi") == 0) {
-            advance(parser);
-            return ast_text("π");
-        }
-
-        if (strcmp(command, "infty") == 0) {
-            advance(parser);
-            return ast_text("∞");
-        }
-
-        if (strcmp(command, "leq") == 0) {
-            advance(parser);
-            return ast_text("≤");
-        }
-
-        if (strcmp(command, "geq") == 0) {
-            advance(parser);
-            return ast_text("≥");
-        }
-
-        if (strcmp(command, "neq") == 0) {
-            advance(parser);
-            return ast_text("≠");
-        }
-
-        if (strcmp(command, "times") == 0) {
-            advance(parser);
-            return ast_text("×");
-        }
-
-        if (strcmp(command, "cdot") == 0) {
-            advance(parser);
-            return ast_text("·");
-        }
-
-        if (strcmp(command, "rightarrow") == 0) {
-            advance(parser);
-            return ast_text("→");
-        }
-
-        Ast *node = ast_text(command);
-        advance(parser);
-        return node;
+    for (size_t i = 0; i < count; i++) {
+        if (atom_rules[i].type == parser->current.type)
+            return atom_rules[i].parser(parser);
     }
 
     return NULL;
@@ -180,11 +206,13 @@ static Ast *parse_expression(Parser *parser)
 
             Ast *exponent = parse_atom(parser);
 
-            node = ast_binary(
-                AST_SUPERSCRIPT,
-                node,
-                exponent
-            );
+            if (exponent != NULL) {
+                node = ast_binary(
+                    AST_SUPERSCRIPT,
+                    node,
+                    exponent
+                );
+            }
         }
 
         if (parser->current.type == TOKEN_UNDERSCORE) {
@@ -192,11 +220,13 @@ static Ast *parse_expression(Parser *parser)
 
             Ast *subscript = parse_atom(parser);
 
-            node = ast_binary(
-                AST_SUBSCRIPT,
-                node,
-                subscript
-            );
+            if (subscript != NULL) {
+                node = ast_binary(
+                    AST_SUBSCRIPT,
+                    node,
+                    subscript
+                );
+            }
         }
 
         ast_add(sequence, node);
