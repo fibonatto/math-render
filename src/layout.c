@@ -256,36 +256,37 @@ static Box *sequence_box(Ast *node)
     return box;
 }
 
+typedef Box* (*LayoutFunc)(Ast *node);
+
+static Box* layout_ast_text(Ast *node) { return text_box(node->text); }
+static Box* layout_sum(Ast *node)      { return text_box("∑"); }
+static Box* layout_int(Ast *node)      { return text_box("∫"); }
+
+static const LayoutFunc handlers[] = {
+    [AST_TEXT]        = layout_ast_text,
+    [AST_FRACTION]    = fraction_box,
+    [AST_SUPERSCRIPT] = superscript_box,
+    [AST_SUBSCRIPT]   = sequence_box,
+    [AST_SEQUENCE]    = sequence_box,
+    [AST_SUM]         = layout_sum,
+    [AST_INT]         = layout_int,
+};
+
+static const int HANDLERS_COUNT = sizeof(handlers) / sizeof(handlers[0]);
+
 Box *layout(Ast *node)
 {
     if (!node)
         return text_box("");
 
-    switch (node->type) {
-    case AST_TEXT:
-        return text_box(node->text);
-
-    case AST_FRACTION:
-        return fraction_box(node);
-
-    case AST_SUPERSCRIPT:
-        return superscript_box(node);
-
-    case AST_SUBSCRIPT:
-        return sequence_box(node);
-
-    case AST_SEQUENCE:
-        return sequence_box(node);
-
-    case AST_SUM:
-        return text_box("∑");
-
-    case AST_INT:
-        return text_box("∫");
-
-    default:
-        return text_box("");
+    if (node->type >= 0 && node->type < HANDLERS_COUNT) {
+        LayoutFunc func = handlers[node->type];
+        if (func) {
+            return func(node);
+        }
     }
+
+    return text_box("");
 }
 
 void box_free(Box *box)

@@ -11,6 +11,8 @@ typedef struct {
     char **lines;
 } Box;
 
+typedef Box* (*LayoutFunc)(Ast *node);
+
 Box *layout(Ast *node);
 void box_free(Box *box);
 
