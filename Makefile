@@ -3,7 +3,8 @@ CC = cc
 CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -O2
 CPPFLAGS = -Iinclude
 
-TARGET = build/math-render
+TARGET = math-render
+# TARGET = build/math-render
 OBJDIR = build/obj
 
 SRC = \
