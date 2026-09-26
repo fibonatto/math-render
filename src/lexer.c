@@ -23,6 +23,23 @@ void lexer_init(Lexer *lexer, const char *input)
     lexer->position = 0;
 }
 
+// ASCII to TokenType mapping. Unmapped chars default to 0.
+static const int char_to_token[256] = {
+    ['{'] = TOKEN_LBRACE,
+    ['}'] = TOKEN_RBRACE,
+    ['('] = TOKEN_LPAREN,
+    [')'] = TOKEN_RPAREN,
+    ['^'] = TOKEN_CARET,
+    ['_'] = TOKEN_UNDERSCORE,
+    ['+'] = TOKEN_OPERATOR,
+    ['-'] = TOKEN_OPERATOR,
+    ['='] = TOKEN_OPERATOR,
+    ['*'] = TOKEN_OPERATOR,
+    ['/'] = TOKEN_OPERATOR,
+    ['<'] = TOKEN_OPERATOR,
+    ['>'] = TOKEN_OPERATOR,
+};
+
 Token lexer_next(Lexer *lexer)
 {
     const char *input = lexer->input;
@@ -31,65 +48,40 @@ Token lexer_next(Lexer *lexer)
     while (isspace((unsigned char) input[*pos]))
         (*pos)++;
 
-    char c = input[*pos];
+    unsigned char c = input[*pos];
 
     if (!c)
         return (Token) { TOKEN_EOF, NULL };
 
-    if (c == '{') {
-        (*pos)++;
-        return (Token) { TOKEN_LBRACE, strdup("{") };
-    }
-
-    if (c == '}') {
-        (*pos)++;
-        return (Token) { TOKEN_RBRACE, strdup("}") };
-    }
-
-    if (c == '(') {
-        (*pos)++;
-        return (Token) { TOKEN_LPAREN, strdup("(") };
-    }
-
-    if (c == ')') {
-        (*pos)++;
-        return (Token) { TOKEN_RPAREN, strdup(")") };
-    }
-
-    if (c == '^') {
-        (*pos)++;
-        return (Token) { TOKEN_CARET, strdup("^") };
-    }
-
-    if (c == '_') {
-        (*pos)++;
-        return (Token) { TOKEN_UNDERSCORE, strdup("_") };
-    }
-
-    if (strchr("+-=*/<>", c)) {
-        (*pos)++;
-        char value[2] = { c, '\0' };
-        return (Token) { TOKEN_OPERATOR, strdup(value) };
-    }
-
+    // Handle commands
     if (c == '\\') {
         size_t start = ++(*pos);
-
+        
         while (isalpha((unsigned char) input[*pos]))
             (*pos)++;
-
+            
         return (Token) {
             TOKEN_COMMAND,
             copy_range(input + start, *pos - start)
         };
     }
 
-    size_t start = *pos;
+    // Handle single-character tokens
+    int token_type = char_to_token[c];
+    if (token_type != 0) {
+        (*pos)++;
+        char value[2] = { c, '\0' };
+        return (Token) { token_type, strdup(value) };
+    }
 
+    // Handle text tokens
+    size_t start = *pos;
+    
     while (
         input[*pos] &&
         !isspace((unsigned char) input[*pos]) &&
-        !strchr("{}()^_\\+-=*/<>", input[*pos])
+        input[*pos] != '\\' &&
+        !char_to_token[(unsigned char) input[*pos]]
     ) {
         (*pos)++;
     }

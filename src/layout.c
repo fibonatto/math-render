@@ -256,8 +256,6 @@ static Box *sequence_box(Ast *node)
     return box;
 }
 
-typedef Box* (*LayoutFunc)(Ast *node);
-
 static Box* layout_ast_text(Ast *node) { return text_box(node->text); }
 static Box* layout_sum(Ast *node)      { return text_box("∑"); }
 static Box* layout_int(Ast *node)      { return text_box("∫"); }
