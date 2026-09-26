@@ -69,6 +69,12 @@ void box_free(Box *box)
 
 Box *text_box(const char *text)
 {
+    /* Pass 1: count codepoints, i.e. visual columns. This is the fix --
+     * the original code used strlen() (byte count) as the visual width,
+     * which is only correct for pure ASCII. Every multi-byte glyph in
+     * this renderer (\sum's "∑", the sub/superscript digits) made boxes
+     * wider than they actually are on screen, and every offset computed
+     * from that width inherited the error. */
     size_t width = 0;
     for (const char *p = text; *p; )
         p += utf8_seq_len((unsigned char)*p), width++;
@@ -93,6 +99,11 @@ Box *text_box(const char *text)
 
 void put_box(Box *dst, const Box *src, size_t x, size_t y)
 {
+    /* Copying whole Cells (not raw bytes at a byte offset that used to
+     * assume "4 bytes per column") means this is correct regardless of
+     * how many bytes any given glyph encodes to, and it's now bounds
+     * checked -- the original had none, so a wide child box placed near
+     * a parent's right edge could write past the destination buffer. */
     for (size_t row = 0; row < src->height; row++) {
         size_t dst_y = y + row;
         if (dst_y >= dst->height)
@@ -257,8 +268,14 @@ static Box *subscript_box(Ast *node)
 
         Box *box = box_create(base->width + power->width, base->height);
 
+        /* Subscript goes on the base's BOTTOM row, not row 0. For a
+         * 1-row base (plain letters/digits) those are the same row, so
+         * this looked right for years -- it only broke once a base
+         * (the \sum operator) got taller than 1 row. */
+        size_t sub_row = base->height - 1;
+
         put_box(box, base, 0, 0);
-        put_box(box, power, base->width, 0);
+        put_box(box, power, base->width, sub_row);
 
         box->baseline = base->baseline;
 
