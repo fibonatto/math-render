@@ -1,5 +1,5 @@
-#ifndef MATH_RENDER_RENDERER_H
-#define MATH_RENDER_RENDERER_H
+#ifndef RENDERER_H
+#define RENDERER_H
 
 #include "layout.h"
 

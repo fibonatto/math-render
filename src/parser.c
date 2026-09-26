@@ -289,31 +289,32 @@ static Ast *parse_expression(Parser *parser)
             continue;
         }
 
-        if (parser->current.type == TOKEN_CARET) {
-            advance(parser);
+        while (parser->current.type == TOKEN_CARET ||
+               parser->current.type == TOKEN_UNDERSCORE) {
+            if (parser->current.type == TOKEN_CARET) {
+                advance(parser);
 
-            Ast *exponent = parse_atom(parser);
+                Ast *exponent = parse_atom(parser);
 
-            if (exponent != NULL) {
-                node = ast_binary(
-                    AST_SUPERSCRIPT,
-                    node,
-                    exponent
-                );
-            }
-        }
+                if (exponent != NULL) {
+                    node = ast_binary(
+                        AST_SUPERSCRIPT,
+                        node,
+                        exponent
+                    );
+                }
+            } else if (parser->current.type == TOKEN_UNDERSCORE) {
+                advance(parser);
 
-        if (parser->current.type == TOKEN_UNDERSCORE) {
-            advance(parser);
+                Ast *subscript = parse_atom(parser);
 
-            Ast *subscript = parse_atom(parser);
-
-            if (subscript != NULL) {
-                node = ast_binary(
-                    AST_SUBSCRIPT,
-                    node,
-                    subscript
-                );
+                if (subscript != NULL) {
+                    node = ast_binary(
+                        AST_SUBSCRIPT,
+                        node,
+                        subscript
+                    );
+                }
             }
         }
 

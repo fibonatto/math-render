@@ -8,13 +8,18 @@ void render(Box *box)
     if (!box)
         return;
 
-    for (size_t i = 0; i < box->height; i++) {
-        size_t length = strlen(box->lines[i]);
+    for (size_t y = 0; y < box->height; y++) {
+        /* Trim trailing blank columns, same behavior as the original
+         * (which trimmed trailing ' ' bytes off the line buffer). */
+        size_t print_upto = 0;
+        for (size_t x = 0; x < box->width; x++) {
+            if (strcmp(box->lines[y][x].bytes, " ") != 0)
+                print_upto = x + 1;
+        }
 
-        while (length > 0 && box->lines[i][length - 1] == ' ')
-            length--;
+        for (size_t x = 0; x < print_upto; x++)
+            fputs(box->lines[y][x].bytes, stdout);
 
-        fwrite(box->lines[i], 1, length, stdout);
         putchar('\n');
     }
 }

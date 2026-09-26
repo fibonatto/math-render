@@ -4,84 +4,132 @@
 #include <stdlib.h>
 #include <string.h>
 
-static Box *box_create(size_t width, size_t height)
+/* ------------------------------------------------------------------ */
+/* UTF-8 helpers                                                        */
+/* ------------------------------------------------------------------ */
+
+/* Length in bytes of the UTF-8 sequence starting with `lead`. Falls
+ * back to 1 for a stray continuation byte so callers always make
+ * forward progress instead of looping forever on malformed input. */
+static size_t utf8_seq_len(unsigned char lead)
+{
+    if ((lead & 0x80) == 0x00) return 1;   /* 0xxxxxxx */
+    if ((lead & 0xE0) == 0xC0) return 2;   /* 110xxxxx */
+    if ((lead & 0xF0) == 0xE0) return 3;   /* 1110xxxx */
+    if ((lead & 0xF8) == 0xF0) return 4;   /* 11110xxx */
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Box primitives                                                       */
+/* ------------------------------------------------------------------ */
+
+static void cell_set_space(Cell *cell)
+{
+    cell->bytes[0] = ' ';
+    cell->bytes[1] = '\0';
+}
+
+Box *box_create(size_t width, size_t height)
 {
     Box *box = calloc(1, sizeof(Box));
-
     if (!box)
         return NULL;
 
     box->width = width;
     box->height = height;
+    box->baseline = 0;
 
-    box->lines = calloc(height, sizeof(char *));
+    box->lines = calloc(height, sizeof(Cell *));
+    if (!box->lines) {
+        free(box);
+        return NULL;
+    }
 
-    for (size_t i = 0; i < height; i++) {
-        box->lines[i] = calloc(width + 1, 1);
-        memset(box->lines[i], ' ', width);
+    for (size_t y = 0; y < height; y++) {
+        box->lines[y] = calloc(width, sizeof(Cell));
+        for (size_t x = 0; x < width; x++)
+            cell_set_space(&box->lines[y][x]);
     }
 
     return box;
 }
 
-static Box *text_box(const char *text)
+void box_free(Box *box)
 {
-    size_t width = strlen(text);
+    if (!box)
+        return;
+
+    for (size_t i = 0; i < box->height; i++)
+        free(box->lines[i]);
+
+    free(box->lines);
+    free(box);
+}
+
+Box *text_box(const char *text)
+{
+    size_t width = 0;
+    for (const char *p = text; *p; )
+        p += utf8_seq_len((unsigned char)*p), width++;
 
     Box *box = box_create(width, 1);
-
     if (!box)
         return NULL;
 
-    memcpy(box->lines[0], text, width);
+    size_t col = 0;
+    for (const char *p = text; *p; col++) {
+        size_t n = utf8_seq_len((unsigned char)*p);
+        if (n > sizeof(box->lines[0][col].bytes) - 1)
+            n = 1; /* defensive; never true for valid UTF-8 */
+        memcpy(box->lines[0][col].bytes, p, n);
+        box->lines[0][col].bytes[n] = '\0';
+        p += n;
+    }
 
     box->baseline = 0;
-
     return box;
 }
 
-static void put_box(
-    Box *dst,
-    Box *src,
-    size_t x,
-    size_t y
-)
+void put_box(Box *dst, const Box *src, size_t x, size_t y)
 {
     for (size_t row = 0; row < src->height; row++) {
-        size_t src_len = strlen(src->lines[row]);
-
-        if (x >= dst->width || y + row >= dst->height)
+        size_t dst_y = y + row;
+        if (dst_y >= dst->height)
             continue;
 
-        size_t available = dst->width - x;
+        for (size_t colu = 0; colu < src->width; colu++) {
+            size_t dst_x = x + colu;
+            if (dst_x >= dst->width)
+                continue;
 
-        if (src_len > available)
-            src_len = available;
-
-        memcpy(
-            dst->lines[y + row] + x,
-            src->lines[row],
-            src_len
-        );
+            dst->lines[dst_y][dst_x] = src->lines[row][colu];
+        }
     }
 }
+
+static void box_set_glyph(Box *box, size_t x, size_t y, const char *glyph)
+{
+    if (x >= box->width || y >= box->height)
+        return;
+    strncpy(box->lines[y][x].bytes, glyph, sizeof(box->lines[y][x].bytes) - 1);
+    box->lines[y][x].bytes[sizeof(box->lines[y][x].bytes) - 1] = '\0';
+}
+
+/* ------------------------------------------------------------------ */
+/* Layout handlers                                                       */
+/* ------------------------------------------------------------------ */
 
 static Box *fraction_box(Ast *node)
 {
     Box *top = layout(node->left);
     Box *bottom = layout(node->right);
 
-    size_t width = top->width > bottom->width
-        ? top->width
-        : bottom->width;
-
+    size_t width = top->width > bottom->width ? top->width : bottom->width;
     if (width < 1)
         width = 1;
 
-    size_t height =
-        top->height +
-        1 +
-        bottom->height;
+    size_t height = top->height + 1 + bottom->height;
 
     Box *box = box_create(width, height);
 
@@ -90,15 +138,10 @@ static Box *fraction_box(Ast *node)
 
     put_box(box, top, top_x, 0);
 
-    for (size_t i = 0; i < width; i++)
-		box->lines[top->height][i] = '-';
+    for (size_t x = 0; x < width; x++)
+        box_set_glyph(box, x, top->height, "-");
 
-    put_box(
-        box,
-        bottom,
-        bottom_x,
-        top->height + 1
-    );
+    put_box(box, bottom, bottom_x, top->height + 1);
 
     box->baseline = top->height + 1;
 
@@ -137,33 +180,17 @@ static Box *superscript_box(Ast *node)
 {
     const char *sup = NULL;
 
-    if (node->right &&
-        node->right->type == AST_TEXT) {
+    if (node->right && node->right->type == AST_TEXT)
         sup = superscript_char(node->right->text);
-    }
 
     if (sup) {
         Box *base = layout(node->left);
         Box *power = text_box(sup);
 
-        Box *box = box_create(
-            base->width + power->width,
-            base->height
-        );
+        Box *box = box_create(base->width + power->width, base->height);
 
-        put_box(
-            box,
-            base,
-            0,
-            0
-        );
-
-        put_box(
-            box,
-            power,
-            base->width,
-            0
-        );
+        put_box(box, base, 0, 0);
+        put_box(box, power, base->width, 0);
 
         box->baseline = base->baseline;
 
@@ -181,19 +208,8 @@ static Box *superscript_box(Ast *node)
 
     Box *box = box_create(width, height);
 
-    put_box(
-        box,
-        base,
-        0,
-        power->height
-    );
-
-    put_box(
-        box,
-        power,
-        base->width,
-        0
-    );
+    put_box(box, base, 0, power->height);
+    put_box(box, power, base->width, 0);
 
     box->baseline = base->baseline + power->height;
 
@@ -203,15 +219,80 @@ static Box *superscript_box(Ast *node)
     return box;
 }
 
+static const char *subscript_char(const char *text)
+{
+    if (!text || strlen(text) != 1)
+        return NULL;
+
+    switch (text[0]) {
+    case '0': return "₀";
+    case '1': return "₁";
+    case '2': return "₂";
+    case '3': return "₃";
+    case '4': return "₄";
+    case '5': return "₅";
+    case '6': return "₆";
+    case '7': return "₇";
+    case '8': return "₈";
+    case '9': return "₉";
+    case '+': return "₊";
+    case '-': return "₋";
+    case '=': return "₌";
+    case '(': return "₍";
+    case ')': return "₎";
+    default: return NULL;
+    }
+}
+
+static Box *subscript_box(Ast *node)
+{
+    const char *sub = NULL;
+
+    if (node->right && node->right->type == AST_TEXT)
+        sub = subscript_char(node->right->text);
+
+    if (sub) {
+        Box *base = layout(node->left);
+        Box *power = text_box(sub);
+
+        Box *box = box_create(base->width + power->width, base->height);
+
+        put_box(box, base, 0, 0);
+        put_box(box, power, base->width, 0);
+
+        box->baseline = base->baseline;
+
+        box_free(base);
+        box_free(power);
+
+        return box;
+    }
+
+    Box *base = layout(node->left);
+    Box *sub_box = layout(node->right);
+
+    size_t width = base->width + sub_box->width;
+    size_t height = base->height + sub_box->height;
+
+    Box *box = box_create(width, height);
+
+    put_box(box, base, 0, 0);
+    put_box(box, sub_box, base->width, base->height);
+
+    box->baseline = base->baseline;
+
+    box_free(base);
+    box_free(sub_box);
+
+    return box;
+}
+
 static Box *sequence_box(Ast *node)
 {
     if (node->child_count == 0)
         return text_box("");
 
-    Box **boxes = calloc(
-        node->child_count,
-        sizeof(Box *)
-    );
+    Box **boxes = calloc(node->child_count, sizeof(Box *));
 
     size_t width = 0;
     size_t above = 0;
@@ -223,12 +304,10 @@ static Box *sequence_box(Ast *node)
         width += boxes[i]->width;
 
         size_t box_above = boxes[i]->baseline;
-        size_t box_below =
-            boxes[i]->height - boxes[i]->baseline - 1;
+        size_t box_below = boxes[i]->height - boxes[i]->baseline - 1;
 
         if (box_above > above)
             above = box_above;
-
         if (box_below > below)
             below = box_below;
     }
@@ -256,18 +335,91 @@ static Box *sequence_box(Ast *node)
     return box;
 }
 
-static Box* layout_ast_text(Ast *node) { return text_box(node->text); }
-static Box* layout_sum(Ast *node)      { return text_box("∑"); }
-static Box* layout_int(Ast *node)      { return text_box("∫"); }
+static Box *layout_ast_text(Ast *node) { return text_box(node->text); }
+
+/*
+ * Stacks an optional superscript, a (possibly multi-row) operator glyph,
+ * and an optional subscript into one box, centering each row on the
+ * widest one. This replaces the old apply_limits(), which rebuilt the
+ * box twice (once per limit) using the same width/height math -- same
+ * behavior, expressed once, and now able to take a multi-row operator
+ * (needed for the two-glyph "⎲ / ⎳" summation sign below) instead of
+ * assuming the operator is always a single row.
+ *
+ * Takes ownership of sup/op/sub: all non-NULL boxes passed in are freed
+ * before this returns.
+ */
+static Box *stack_limits(Box *sup, Box *op, Box *sub)
+{
+    size_t width = op->width;
+    if (sup && sup->width > width) width = sup->width;
+    if (sub && sub->width > width) width = sub->width;
+
+    size_t height = op->height;
+    if (sup) height += sup->height;
+    if (sub) height += sub->height;
+
+    Box *box = box_create(width, height);
+
+    size_t y = 0;
+
+    if (sup) {
+        put_box(box, sup, (width - sup->width) / 2, y);
+        y += sup->height;
+        box_free(sup);
+    }
+
+    put_box(box, op, (width - op->width) / 2, y);
+    box->baseline = y + op->baseline;
+    y += op->height;
+    box_free(op);
+
+    if (sub)
+        put_box(box, sub, (width - sub->width) / 2, y);
+    box_free(sub);
+
+    return box;
+}
+
+/* The classic ∑ character is 1 row and, worse for us, 3 bytes -- exactly
+ * the kind of multi-byte glyph that triggered the original bug. Per your
+ * request we build the tall sum sign from its two Unicode halves
+ * instead, stacked with no blank row between them. Its baseline is the
+ * bottom row, matching how a single-row glyph's baseline sits at its
+ * own row -- so text after the \sum lines up with "⎳", not "⎲". */
+static Box *summation_operator(void)
+{
+    Box *op = box_create(1, 2);
+    box_set_glyph(op, 0, 0, "⎲");
+    box_set_glyph(op, 0, 1, "⎳");
+    op->baseline = 1;
+    return op;
+}
+
+static Box *summation_box(Ast *node)
+{
+    Box *op = summation_operator();
+    Box *sub = node->left  ? layout(node->left)  : NULL;
+    Box *sup = node->right ? layout(node->right) : NULL;
+    return stack_limits(sup, op, sub);
+}
+
+static Box *integral_box(Ast *node)
+{
+    Box *op = text_box("∫");
+    Box *sub = node->left  ? layout(node->left)  : NULL;
+    Box *sup = node->right ? layout(node->right) : NULL;
+    return stack_limits(sup, op, sub);
+}
 
 static const LayoutFunc handlers[] = {
     [AST_TEXT]        = layout_ast_text,
     [AST_FRACTION]    = fraction_box,
     [AST_SUPERSCRIPT] = superscript_box,
-    [AST_SUBSCRIPT]   = sequence_box,
+    [AST_SUBSCRIPT]   = subscript_box,
     [AST_SEQUENCE]    = sequence_box,
-    [AST_SUM]         = layout_sum,
-    [AST_INT]         = layout_int,
+    [AST_SUM]         = summation_box,
+    [AST_INT]         = integral_box,
 };
 
 static const int HANDLERS_COUNT = sizeof(handlers) / sizeof(handlers[0]);
@@ -279,22 +431,9 @@ Box *layout(Ast *node)
 
     if (node->type >= 0 && node->type < HANDLERS_COUNT) {
         LayoutFunc func = handlers[node->type];
-        if (func) {
+        if (func)
             return func(node);
-        }
     }
 
     return text_box("");
-}
-
-void box_free(Box *box)
-{
-    if (!box)
-        return;
-
-    for (size_t i = 0; i < box->height; i++)
-        free(box->lines[i]);
-
-    free(box->lines);
-    free(box);
 }
