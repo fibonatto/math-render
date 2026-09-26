@@ -104,6 +104,41 @@ static Ast *parse_frac(Parser *parser)
     );
 }
 
+static Ast *parse_binom(Parser *parser)
+{
+    advance(parser);
+
+    Ast *top = parse_atom(parser);
+
+    if (top == NULL)
+        return ast_text("\\binom");
+
+    Ast *bottom = parse_atom(parser);
+
+    if (bottom == NULL) {
+        ast_free(top);
+        return ast_text("\\binom");
+    }
+
+    return ast_binary(
+        AST_BINOM,
+        top,
+        bottom
+    );
+}
+
+static Ast *parse_sqrt(Parser *parser)
+{
+    advance(parser);
+
+    Ast *radicand = parse_atom(parser);
+
+    if (radicand == NULL)
+        return ast_text("\\sqrt");
+
+    return ast_unary(AST_SQRT, radicand);
+}
+
 static Ast *parse_sum(Parser *parser)
 {
     advance(parser);
@@ -131,12 +166,12 @@ static const CommandRule command_rules[] = {
     // PARSED COMMANDS (Require logic to read arguments)
     // =========================================================
     {"frac",       parse_frac,  NULL},
+    {"binom",      parse_binom, NULL},
     {"sum",        parse_sum,   NULL},
     {"int",        parse_int,   NULL},
+    {"sqrt",       parse_sqrt,  NULL},
     // {"prod",       parse_prod,  NULL}, // Product (Π) - similar to sum
-    // {"sqrt",       parse_sqrt,  NULL}, // Square root (e.g., draw √ and overline)
     // {"lim",        parse_lim,   NULL}, // Limits (place text below lim)
-    // {"binom",      parse_binom, NULL}, // Binomial (similar to frac, but with parentheses instead of a bar)
     
     // =========================================================
     // GREEK LETTERS
@@ -273,6 +308,20 @@ static Ast *parse_atom(Parser *parser)
     return NULL;
 }
 
+static int is_big_operator(AstType type)
+{
+    /* \sum and \int don't have "sub"/"super" scripts in the usual
+     * sense -- \sum_a^b attaches a lower and an upper *limit* to the
+     * operator itself, and needs to render centered above/below it
+     * (layout.c's stack_limits), not corner-offset like x_i or x^2.
+     * So when the thing that just got parsed IS one of these bare
+     * operators, a following _/^ fills its own left/right (lower/upper
+     * limit) instead of wrapping it in a generic AST_SUBSCRIPT/
+     * AST_SUPERSCRIPT node. Add AST_PROD (or similar) here too if it
+     * gets implemented later. */
+    return type == AST_SUM || type == AST_INT;
+}
+
 static Ast *parse_expression(Parser *parser)
 {
     Ast *sequence = ast_sequence();
@@ -297,11 +346,16 @@ static Ast *parse_expression(Parser *parser)
                 Ast *exponent = parse_atom(parser);
 
                 if (exponent != NULL) {
-                    node = ast_binary(
-                        AST_SUPERSCRIPT,
-                        node,
-                        exponent
-                    );
+                    if (is_big_operator(node->type)) {
+                        ast_free(node->right); /* NULL first time; no-op */
+                        node->right = exponent;
+                    } else {
+                        node = ast_binary(
+                            AST_SUPERSCRIPT,
+                            node,
+                            exponent
+                        );
+                    }
                 }
             } else if (parser->current.type == TOKEN_UNDERSCORE) {
                 advance(parser);
@@ -309,11 +363,16 @@ static Ast *parse_expression(Parser *parser)
                 Ast *subscript = parse_atom(parser);
 
                 if (subscript != NULL) {
-                    node = ast_binary(
-                        AST_SUBSCRIPT,
-                        node,
-                        subscript
-                    );
+                    if (is_big_operator(node->type)) {
+                        ast_free(node->left);
+                        node->left = subscript;
+                    } else {
+                        node = ast_binary(
+                            AST_SUBSCRIPT,
+                            node,
+                            subscript
+                        );
+                    }
                 }
             }
         }

@@ -44,6 +44,14 @@ Ast *ast_binary(AstType type, Ast *left, Ast *right)
     return node;
 }
 
+Ast *ast_unary(AstType type, Ast *child)
+{
+    /* Same shape as ast_binary, just documents that this construct
+     * (currently only \sqrt) has one operand, not two -- it's stored
+     * in `left`, `right` stays NULL. */
+    return ast_binary(type, child, NULL);
+}
+
 Ast *ast_sequence(void)
 {
     return ast_new(AST_SEQUENCE);

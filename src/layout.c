@@ -13,11 +13,11 @@
  * forward progress instead of looping forever on malformed input. */
 static size_t utf8_seq_len(unsigned char lead)
 {
-    if ((lead & 0x80) == 0x00) return 1;   /* 0xxxxxxx */
-    if ((lead & 0xE0) == 0xC0) return 2;   /* 110xxxxx */
-    if ((lead & 0xF0) == 0xE0) return 3;   /* 1110xxxx */
-    if ((lead & 0xF8) == 0xF0) return 4;   /* 11110xxx */
-    return 1;
+    if ((lead & 0x81) == 0x00) return 1;   /* 0xxxxxxx */
+    if ((lead & 0xE1) == 0xC0) return 2;   /* 110xxxxx */
+    if ((lead & 0xF1) == 0xE0) return 3;   /* 1110xxxx */
+    if ((lead & 0xF9) == 0xF0) return 4;   /* 11110xxx */
+    return 2;
 }
 
 /* ------------------------------------------------------------------ */
@@ -131,6 +131,98 @@ static void box_set_glyph(Box *box, size_t x, size_t y, const char *glyph)
 /* Layout handlers                                                       */
 /* ------------------------------------------------------------------ */
 
+/* Stacks top/fill/bottom into a single-column Box `height` rows tall:
+ * `top` at row 0, `bottom` at the last row, `fill` repeated for every
+ * row in between (zero or more of them). For a height of 1 there's no
+ * room for a separate top and bottom, so `bottom` alone is used --
+ * which is exactly the right degenerate case for \sqrt{x} on a single
+ * line (the "√" hook with no extra ascender above it).
+ *
+ * This is the piece \binom's parentheses and \sqrt's radical both
+ * need -- a symbol that grows to match its content's height -- kept
+ * as one function instead of two near-copies so a future \left(...\right)
+ * or similar has somewhere to plug in too. */
+static Box *stretch_glyph(const char *top, const char *fill, const char *bottom, size_t height)
+{
+    if (height < 1)
+        height = 1;
+
+    Box *box = box_create(1, height);
+
+    if (height == 1) {
+        box_set_glyph(box, 0, 0, bottom);
+        return box;
+    }
+
+    box_set_glyph(box, 0, 0, top);
+    for (size_t y = 1; y + 1 < height; y++)
+        box_set_glyph(box, 0, y, fill);
+    box_set_glyph(box, 0, height - 1, bottom);
+
+    return box;
+}
+
+static Box *binom_box(Ast *node)
+{
+    Box *top = layout(node->left);
+    Box *bottom = layout(node->right);
+
+    size_t inner_width = top->width > bottom->width ? top->width : bottom->width;
+    size_t height = top->height + bottom->height;
+
+    /* Unlike \frac, there's no divider bar between the two terms. */
+    Box *stack = box_create(inner_width, height);
+    put_box(stack, top, (inner_width - top->width) / 2, 0);
+    put_box(stack, bottom, (inner_width - bottom->width) / 2, top->height);
+
+    Box *lparen = stretch_glyph("/", "|", "\\", height);
+    Box *rparen = stretch_glyph("\\", "|", "/", height);
+
+    Box *box = box_create(lparen->width + stack->width + rparen->width, height);
+    put_box(box, lparen, 0, 0);
+    put_box(box, stack, lparen->width, 0);
+    put_box(box, rparen, lparen->width + stack->width, 0);
+
+    /* Same convention as fraction_box: baseline lands on the row where
+     * the bottom term starts (there, that row holds the divider bar;
+     * here, it's the bottom term's own first row). */
+    box->baseline = top->height;
+
+    box_free(top);
+    box_free(bottom);
+    box_free(stack);
+    box_free(lparen);
+    box_free(rparen);
+
+    return box;
+}
+
+static Box *sqrt_box(Ast *node)
+{
+    Box *radicand = layout(node->left);
+
+    Box *hook = stretch_glyph("/", "│", "√", radicand->height);
+
+    size_t width = hook->width + radicand->width;
+    size_t height = radicand->height + 1; /* +1 for the vinculum */
+
+    Box *box = box_create(width, height);
+
+    /* Vinculum: the bar spans the radicand only, not the hook. */
+    for (size_t x = hook->width; x < width; x++)
+        box_set_glyph(box, x, 0, "_");
+
+    put_box(box, hook, 0, 1);
+    put_box(box, radicand, hook->width, 1);
+
+    box->baseline = radicand->baseline + 1;
+
+    box_free(radicand);
+    box_free(hook);
+
+    return box;
+}
+
 static Box *fraction_box(Ast *node)
 {
     Box *top = layout(node->left);
@@ -150,7 +242,7 @@ static Box *fraction_box(Ast *node)
     put_box(box, top, top_x, 0);
 
     for (size_t x = 0; x < width; x++)
-        box_set_glyph(box, x, top->height, "-");
+        box_set_glyph(box, x, top->height, "—");
 
     put_box(box, bottom, bottom_x, top->height + 1);
 
@@ -183,6 +275,34 @@ static const char *superscript_char(const char *text)
     case '=': return "⁼";
     case '(': return "⁽";
     case ')': return "⁾";
+
+	case 'a': return "ᵃ";
+    case 'b': return "ᵇ";
+    case 'c': return "ᶜ";
+    case 'd': return "ᵈ";
+    case 'e': return "ᵉ";
+    case 'f': return "ᶠ";
+    case 'g': return "ᵍ";
+    case 'h': return "ʰ";
+    case 'i': return "ⁱ";
+    case 'j': return "ʲ";
+    case 'k': return "ᵏ";
+    case 'l': return "ˡ";
+    case 'm': return "ᵐ";
+    case 'n': return "ⁿ";
+    case 'o': return "ᵒ";
+    case 'p': return "ᵖ";
+	case 'q': return "ᑫ";
+    case 'r': return "ʳ";
+    case 's': return "ˢ";
+    case 't': return "ᵗ";
+    case 'u': return "ᵘ";
+    case 'v': return "ᵛ";
+    case 'w': return "ʷ";
+    case 'x': return "ˣ";
+    case 'y': return "ʸ";
+    case 'z': return "ᶻ";
+
     default: return NULL;
     }
 }
@@ -251,6 +371,25 @@ static const char *subscript_char(const char *text)
     case '=': return "₌";
     case '(': return "₍";
     case ')': return "₎";
+
+	case 'a': return "ₐ";
+    case 'e': return "ₑ";
+    case 'h': return "ₕ";
+    case 'i': return "ᵢ";
+    case 'j': return "ⱼ";
+    case 'k': return "ₖ";
+    case 'l': return "ₗ";
+    case 'm': return "ₘ";
+    case 'n': return "ₙ";
+    case 'o': return "ₒ";
+    case 'p': return "ₚ";
+    case 'r': return "ᵣ";
+    case 's': return "ₛ";
+    case 't': return "ₜ";
+    case 'u': return "ᵤ";
+    case 'v': return "ᵥ";
+    case 'x': return "ₓ";
+
     default: return NULL;
     }
 }
@@ -398,18 +537,43 @@ static Box *stack_limits(Box *sup, Box *op, Box *sub)
     return box;
 }
 
-/* The classic ∑ character is 1 row and, worse for us, 3 bytes -- exactly
- * the kind of multi-byte glyph that triggered the original bug. Per your
- * request we build the tall sum sign from its two Unicode halves
- * instead, stacked with no blank row between them. Its baseline is the
- * bottom row, matching how a single-row glyph's baseline sits at its
- * own row -- so text after the \sum lines up with "⎳", not "⎲". */
+/* Hand-drawn multi-row operators, built entirely from ASCII and common
+ * box-drawing characters so nothing depends on a font's handling of
+ * rare math-extension glyphs (which is what made the earlier ⎲/⎳
+ * attempt look broken in practice).
+ *
+ *   ───          ⌠
+ *   ╲            |
+ *   ╱⎽⎽          |
+ *                ⌡
+ *
+ * Baseline is the row surrounding text should align with: for the sum
+ * sign that's the diagonal stroke (its "waist"); for the integral,
+ * the lower of the two vertical-bar rows. Both are just a starting
+ * pick -- easy to move by changing the single ->baseline assignment
+ * below if it doesn't look right against real content. */
 static Box *summation_operator(void)
 {
-    Box *op = box_create(1, 2);
-    box_set_glyph(op, 0, 0, "⎲");
-    box_set_glyph(op, 0, 1, "⎳");
+    Box *op = box_create(3, 3);
+    box_set_glyph(op, 0, 0, "─");
+    box_set_glyph(op, 1, 0, "─");
+    box_set_glyph(op, 2, 0, "─");
+    box_set_glyph(op, 0, 1, "╲");
+    box_set_glyph(op, 0, 2, "╱");
+    box_set_glyph(op, 1, 2, "⎽");
+    box_set_glyph(op, 2, 2, "⎽");
     op->baseline = 1;
+    return op;
+}
+
+static Box *integral_operator(void)
+{
+    Box *op = box_create(1, 4);
+    box_set_glyph(op, 0, 0, "⌠");
+    box_set_glyph(op, 0, 1, "|");
+    box_set_glyph(op, 0, 2, "|");
+    box_set_glyph(op, 0, 3, "⌡");
+    op->baseline = 2;
     return op;
 }
 
@@ -423,7 +587,7 @@ static Box *summation_box(Ast *node)
 
 static Box *integral_box(Ast *node)
 {
-    Box *op = text_box("∫");
+    Box *op = integral_operator();
     Box *sub = node->left  ? layout(node->left)  : NULL;
     Box *sup = node->right ? layout(node->right) : NULL;
     return stack_limits(sup, op, sub);
@@ -432,11 +596,13 @@ static Box *integral_box(Ast *node)
 static const LayoutFunc handlers[] = {
     [AST_TEXT]        = layout_ast_text,
     [AST_FRACTION]    = fraction_box,
+    [AST_BINOM]       = binom_box,
     [AST_SUPERSCRIPT] = superscript_box,
     [AST_SUBSCRIPT]   = subscript_box,
     [AST_SEQUENCE]    = sequence_box,
     [AST_SUM]         = summation_box,
     [AST_INT]         = integral_box,
+    [AST_SQRT]        = sqrt_box,
 };
 
 static const int HANDLERS_COUNT = sizeof(handlers) / sizeof(handlers[0]);
