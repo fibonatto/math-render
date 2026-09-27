@@ -24,6 +24,33 @@ static size_t utf8_seq_len(unsigned char lead)
 /* Box primitives                                                       */
 /* ------------------------------------------------------------------ */
 
+static int is_single_char_operator(const Ast *n)
+{
+    if (!n || n->type != AST_TEXT || !n->text || n->text[0] == '\0' || n->text[1] != '\0')
+        return 0;
+
+    switch (n->text[0]) {
+    case '+': case '-': case '=': case '*': case '/': case '<': case '>':
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static size_t sequence_gap(const Ast *left, const Ast *right)
+{
+    size_t gap = 0;
+
+    if (left && (left->type == AST_SUM || left->type == AST_INT))
+        gap = 2;
+
+    if (is_single_char_operator(left) || is_single_char_operator(right))
+        if (gap < 1)
+            gap = 1;
+
+    return gap;
+}
+
 static void cell_set_space(Cell *cell)
 {
     cell->bytes[0] = ' ';
@@ -509,6 +536,9 @@ static Box *sequence_box(Ast *node)
 
         width += boxes[i]->width;
 
+		if (i + 1 < node->child_count)
+            width += sequence_gap(node->children[i], node->children[i + 1]);
+
         size_t box_above = boxes[i]->axis;
         size_t box_below =
             boxes[i]->height - boxes[i]->axis - 1;
@@ -539,6 +569,9 @@ static Box *sequence_box(Ast *node)
         put_box(box, boxes[i], x, y);
 
         x += boxes[i]->width;
+
+		if (i + 1 < node->child_count)
+            x += sequence_gap(node->children[i], node->children[i + 1]);
 
         box_free(boxes[i]);
     }
@@ -716,6 +749,7 @@ static Box *integral_box(Ast *node)
 
     return stack_limits(sup, op, sub);
 }
+
 
 static const LayoutFunc handlers[] = {
     [AST_TEXT]        = layout_ast_text,

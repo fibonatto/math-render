@@ -48,11 +48,19 @@ static char *read_file(const char *path)
     if (!file)
         return NULL;
 
-    fseek(file, 0, SEEK_END);
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return NULL;
+    }
+
     long size = ftell(file);
-    fseek(file, 0, SEEK_SET);
 
     if (size < 0) {
+        fclose(file);
+        return NULL;
+    }
+
+    if (fseek(file, 0, SEEK_SET) != 0) {
         fclose(file);
         return NULL;
     }
@@ -64,30 +72,67 @@ static char *read_file(const char *path)
         return NULL;
     }
 
-    fread(buffer, 1, (size_t)size, file);
-    buffer[size] = '\0';
+    size_t bytes_read = fread(buffer, 1, (size_t)size, file);
+
+    if (bytes_read != (size_t)size && ferror(file)) {
+        free(buffer);
+        fclose(file);
+        return NULL;
+    }
+
+    buffer[bytes_read] = '\0';
 
     fclose(file);
 
     return buffer;
 }
 
+static void usage(const char *program)
+{
+    fprintf(stderr,
+            "usage:\n"
+            "  %s\n"
+            "  %s -f <file>\n"
+            "  %s <expression>\n",
+            program,
+            program,
+            program);
+}
+
 int main(int argc, char **argv)
 {
     char *input = NULL;
 
-    if (argc > 2) {
-        fprintf(stderr, "usage: math-render [file]\n");
+    if (argc == 1) {
+        input = read_stdin();
+    } else if (argc == 2) {
+        if (strcmp(argv[1], "-f") == 0) {
+            fprintf(stderr, "math-render: missing file\n");
+            usage(argv[0]);
+            return 1;
+        }
+
+        if (strcmp(argv[1], "--help") == 0 ||
+            strcmp(argv[1], "-h") == 0) {
+            usage(argv[0]);
+            return 0;
+        }
+
+        input = strdup(argv[1]);
+    } else if (argc == 3 && strcmp(argv[1], "-f") == 0) {
+        input = read_file(argv[2]);
+    } else {
+        usage(argv[0]);
         return 1;
     }
 
-    if (argc == 2)
-        input = read_file(argv[1]);
-    else
-        input = read_stdin();
-
     if (!input) {
-        fprintf(stderr, "math-render: failed to read input\n");
+        if (argc >= 2 && strcmp(argv[1], "-f") == 0)
+            fprintf(stderr, "math-render: failed to read file '%s'\n",
+                    argc >= 3 ? argv[2] : "");
+        else
+            fprintf(stderr, "math-render: failed to read input\n");
+
         return 1;
     }
 
