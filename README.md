@@ -1,45 +1,47 @@
 # math-render
 
-A small terminal-based mathematical expression renderer written in C.
+A small terminal-based mathematical expression renderer written in C11.
 
-`math-render` parses a lightweight LaTeX-like syntax into an AST, computes a terminal layout, and renders the resulting expression using Unicode characters.
+`math-render` parses a lightweight LaTeX-like mathematical syntax into an abstract syntax tree, transforms the AST into a two-dimensional terminal layout, and renders the result using Unicode characters.
 
-The goal is not to reproduce TeX typography. Instead, `math-render` provides a compact way to render mathematical notation directly in a terminal.
+The project is designed around structured layout rather than string substitution. Fractions, roots, scripts, large operators, and nested expressions are represented as composable layout objects with explicit dimensions and baselines.
+
+It is not intended to be a TeX implementation. The goal is to provide a compact and predictable way to render mathematical notation directly in a terminal.
 
 ## Example
 
-```text
+```sh
 ./math-render '\sum_0^n \frac{a_k}{k!} + \int_0^x \frac{t^2}{1+t^2}'
 ```
 
 Output:
 
 ```text
-                         𝑛        𝑥
-                        ───  𝑎    ⌠
-                        ╲     𝑘   |    𝑡²
-                        ╱⎽⎽  —— + |  ——————
-                         0   𝑘!   ⌡  1 + 𝑡²
-                                  0
+                               𝑛        𝑥
+                              ───       ⌠
+                              ╲    𝑎ₖ   |    𝑡²
+                              ╱⎽⎽  —— + |  ——————
+                               0   𝑘!   ⌡  1 + 𝑡²
+                                        0
 ```
 
-Expressions can also be read from a file:
+Expressions can also be read from files:
 
-```text
+```sh
 ./math-render -f formula.tex
 ```
 
-Or from standard input:
+or from standard input:
 
-```text
+```sh
 printf '%s\n' '\frac{a}{b}' | ./math-render
 ```
 
 ## Features
 
-### Basic expressions
+### Mathematical identifiers
 
-Single Latin letters are rendered as mathematical italic characters:
+Latin letters are converted to mathematical italic Unicode characters when an equivalent glyph is available.
 
 ```text
 x
@@ -49,7 +51,7 @@ x
 𝑥
 ```
 
-Multiple letters are rendered individually:
+Multiple letters are handled independently:
 
 ```text
 xy
@@ -65,11 +67,7 @@ Digits remain upright:
 123
 ```
 
-```text
-123
-```
-
-Mixed expressions are supported:
+Mixed identifiers preserve this distinction:
 
 ```text
 x1y2
@@ -79,27 +77,45 @@ x1y2
 𝑥1𝑦2
 ```
 
-### Binary operators
+The same conversion is applied inside larger expressions.
 
-The following operators are supported:
+### Operators
+
+Basic binary operators are supported:
 
 ```text
 +  -  =  *  /  <  >
 ```
 
-For example:
+Whitespace around operators is normalized:
+
+```text
+a+b
+```
+
+and:
+
+```text
+a + b
+```
+
+produce the same structural spacing:
+
+```text
+𝑎 + 𝑏
+```
+
+Operator sequences can be composed:
 
 ```text
 a+b-c=d
 ```
 
-renders as:
-
 ```text
 𝑎 + 𝑏 - 𝑐 = 𝑑
 ```
 
-Unary minus is currently rendered as a normal operator:
+Unary minus is currently represented using the regular subtraction operator:
 
 ```text
 -x
@@ -109,19 +125,11 @@ Unary minus is currently rendered as a normal operator:
 - 𝑥
 ```
 
+This is a known limitation of the current parser/layout model.
+
 ### Superscripts and subscripts
 
-Simple superscripts:
-
-```text
-x^2
-```
-
-```text
-𝑥²
-```
-
-Subscripts:
+Single-character scripts are rendered inline when Unicode provides an appropriate subscript or superscript character.
 
 ```text
 x_1
@@ -131,10 +139,32 @@ x_1
 𝑥₁
 ```
 
-Both orders are supported:
+```text
+x^2
+```
+
+```text
+𝑥²
+```
+
+Alphabetic scripts are also supported when a Unicode equivalent exists:
+
+```text
+a_k
+```
+
+```text
+𝑎ₖ
+```
+
+Both script orders are supported:
 
 ```text
 x_1^2
+```
+
+```text
+𝑥₁²
 ```
 
 and:
@@ -143,51 +173,85 @@ and:
 x^2_1
 ```
 
-Grouped expressions can be used for multi-character scripts:
+```text
+𝑥²₁
+```
+
+Grouped scripts allow multi-character expressions:
 
 ```text
 x^{10}
 ```
 
-Nested scripts are also supported:
+```text
+  10
+  𝑥
+```
+
+Scripts are recursively composable:
 
 ```text
 x^{y^z}
 ```
 
-Repeated superscripts are parsed:
+```text
+  𝑦ᶻ
+  𝑥
+```
+
+Repeated superscripts are parsed as nested script operations:
 
 ```text
 x^2^3
 ```
 
+```text
+𝑥²³
+```
+
+When no dedicated Unicode character exists, the layout engine falls back to a multi-row representation.
+
+For example, an uppercase subscript such as:
+
+```text
+A_T
+```
+
+is represented structurally rather than forced into an invalid Unicode conversion.
+
 ### Fractions
 
-Basic fractions:
+Fractions are represented as independent numerator and denominator boxes separated by a horizontal rule.
 
 ```text
 \frac{a}{b}
 ```
 
 ```text
-𝑎
-—
-𝑏
+  𝑎
+  —
+  𝑏
 ```
 
-Fractions can be nested:
-
-```text
-\frac{a}{\frac{b}{c}}
-```
-
-and can contain scripted expressions:
+Fractions are recursive and can contain arbitrary expressions:
 
 ```text
 \frac{a^2}{b}
 ```
 
-Fractions can also contain larger expressions such as sums:
+```text
+  𝑎²
+  ——
+   𝑏
+```
+
+Nested fractions work naturally:
+
+```text
+\frac{a}{\frac{b}{c}}
+```
+
+The same mechanism allows larger constructs to be embedded inside fractions:
 
 ```text
 \frac{\sum_0^n a_k}{n}
@@ -195,23 +259,30 @@ Fractions can also contain larger expressions such as sums:
 
 ### Binomial coefficients
 
+Binomial coefficients are rendered using terminal-friendly delimiters:
+
 ```text
 \binom{n}{k}
 ```
-
-renders using terminal-friendly delimiters:
 
 ```text
 /𝑛\
 \𝑘/
 ```
 
+The construction is layout-based rather than dependent on a single Unicode glyph.
+
 ### Square roots
 
-Basic square roots:
+Square roots use a constructed radical layout.
 
 ```text
 \sqrt{x}
+```
+
+```text
+ ─
+√𝑥
 ```
 
 Nested roots are supported:
@@ -220,23 +291,38 @@ Nested roots are supported:
 \sqrt{\sqrt{x}}
 ```
 
-Roots can contain compound expressions:
+Roots can contain arbitrary expressions:
 
 ```text
 \sqrt{\frac{a}{b}}
 ```
 
+```text
+  ─
+ /𝑎
+ │—
+ √𝑏
+```
+
 ### Large operators
 
-Summation:
+The renderer provides dedicated layouts for operators that naturally occupy multiple terminal rows.
+
+#### Summation
 
 ```text
 \sum_0^n a_k
 ```
 
-The lower and upper limits are rendered around a multi-line summation symbol.
+```text
+  𝑛
+ ───
+ ╲
+ ╱⎽⎽  𝑎ₖ
+  0
+```
 
-Both limits are optional:
+Upper and lower limits are optional:
 
 ```text
 \sum
@@ -250,67 +336,102 @@ Both limits are optional:
 \sum^n
 ```
 
-The summation operator can be followed directly by its term:
+Large operators can be followed by an attached expression:
 
 ```text
 \sum_0^n \frac{a_k}{k!}
 ```
 
-It also works as part of a larger expression:
+and can appear inside other structures such as fractions:
 
 ```text
-\sum_0^n a_k + x
+\frac{\sum_0^n a_k}{n}
 ```
 
-Integral:
+#### Product
+
+Products use a dedicated multi-row layout:
+
+```text
+\prod_0^n a_k
+```
+
+```text
+  𝑛
+ ───
+ │ │
+ │ │  𝑎ₖ
+  0
+```
+
+Compound limits are supported:
+
+```text
+\prod_{i=1}^n i
+```
+
+```text
+  𝑛
+ ───
+ │ │   𝑖
+ │ │
+ 𝑖 = 1
+```
+
+#### Integral
+
+Integrals are constructed vertically rather than rendered using a single fixed glyph:
 
 ```text
 \int_0^x f(x)
 ```
 
-and without limits:
-
 ```text
-\int
+  𝑥
+  ⌠
+  |
+  |  𝑓(𝑥)
+  ⌡
+  0
 ```
 
-Large operators are laid out as multi-line terminal structures rather than relying on a single Unicode glyph.
+The integral sign itself is extended to match the height required by its surrounding layout.
 
-### Parentheses and groups
+#### Limit
 
-Parentheses are supported:
-
-```text
-(a+b)
-```
-
-Nested parentheses work as well:
+Limits are represented as an operator with an optional condition:
 
 ```text
-((a+b)*c)
+\lim_{x \to 0} f(x)
 ```
-
-Curly braces are used as grouping constructs and are not rendered themselves:
 
 ```text
-{a+b}
+lim  𝑓(𝑥)
+𝑥 → 0
 ```
 
-Unclosed delimiters are handled without crashing:
+A bare limit is also supported:
 
 ```text
-(a+b
+\lim f(x)
 ```
 
-and:
-
-```text
-{a+b
-```
+The limit condition is laid out relative to the operator baseline instead of being treated as an ordinary subscript.
 
 ### Greek letters and mathematical symbols
 
-Common Greek letters are supported:
+Common Greek letters are supported through LaTeX-like commands:
+
+```text
+\alpha
+\beta
+\gamma
+\Gamma
+\Delta
+\Omega
+```
+
+For example:
 
 ```text
 \alpha + \beta = \gamma
@@ -320,13 +441,7 @@ Common Greek letters are supported:
 α + β = γ
 ```
 
-Uppercase Greek letters are also supported:
-
-```text
-\Gamma \Delta \Omega
-```
-
-Other supported mathematical symbols include:
+Supported relations and operators include:
 
 ```text
 \infty
@@ -336,14 +451,18 @@ Other supported mathematical symbols include:
 \times
 \cdot
 \pm
+\le
+\ge
+\to
 ```
 
-Set and logic symbols include:
+Set theory and logic symbols include:
 
 ```text
 \in
 \notin
 \subset
+\subseteq
 \cup
 \cap
 \forall
@@ -366,9 +485,129 @@ Calculus-related symbols include:
 \hbar
 ```
 
-## Unknown commands
+Dots are supported as well:
 
-Unknown commands currently fall back to their command name instead of causing a parse failure.
+```text
+\dots
+\ldots
+\cdots
+```
+
+### Delimiters and grouping
+
+Parentheses are represented as ordinary layout characters and can contain arbitrary expressions:
+
+```text
+(a+b)
+```
+
+Nested parentheses are supported:
+
+```text
+((a+b)*c)
+```
+
+Curly braces are grouping constructs and are not emitted as visible delimiters:
+
+```text
+{a+b}
+```
+
+Groups can contain whitespace and nested structures.
+
+The parser also handles incomplete input without crashing. For example:
+
+```text
+(a+b
+```
+
+and:
+
+```text
+{a+b
+```
+
+are rendered using the expression parsed before the missing closing delimiter.
+
+Unmatched closing delimiters are ignored according to the parser's recovery rules.
+
+### Mathematical fonts
+
+The renderer supports selected Unicode mathematical alphabets.
+
+Blackboard bold:
+
+```text
+\mathbb{P}
+```
+
+```text
+ℙ
+```
+
+Single-atom arguments can also be written without braces:
+
+```text
+\mathbb R
+```
+
+```text
+ℝ
+```
+
+Calligraphic characters are supported where Unicode provides the corresponding mathematical character:
+
+```text
+\mathcal{X}
+```
+
+```text
+𝒳
+```
+
+Coverage is inherently limited by Unicode. For characters without a dedicated mathematical alphabet glyph, the renderer falls back to the available representation.
+
+## Syntax
+
+The input syntax intentionally resembles a small subset of LaTeX rather than attempting to implement the complete language.
+
+Examples:
+
+```text
+x
+x_1
+x^2
+x_1^2
+x^{10}
+\frac{a}{b}
+\sqrt{x}
+\sum_0^n a_k
+\prod_{i=1}^n i
+\int_0^x f(x)
+\lim_{x\to\infty} \frac{1}{n}
+\mathbb{P}
+\mathcal{X}
+```
+
+Commands may consume braced groups or, for commands that accept a single atom, an unbraced atom.
+
+For example:
+
+```text
+\mathbb{P}
+```
+
+and:
+
+```text
+\mathbb P
+```
+
+are both supported.
+
+## Unknown commands and fallback behavior
+
+Unknown commands do not cause an immediate parse error.
 
 For example:
 
@@ -376,208 +615,562 @@ For example:
 \foo
 ```
 
-renders as:
+falls back to:
 
 ```text
 foo
 ```
 
-This also means that commands not currently implemented as mathematical operators are treated as text.
+This behavior allows unsupported commands to degrade into textual output instead of terminating the entire expression.
 
-For example, `\prod` and `\lim` are currently not implemented as dedicated large operators.
+Malformed or incomplete constructs also use parser fallback/recovery behavior where possible.
 
-```text
-\prod_0^n a_k
-```
-
-and:
+Examples include:
 
 ```text
-\lim_{x \to 0} f(x)
+\frac{a}
+\sqrt
+x_
+x^
+x\
 ```
 
-therefore do not receive specialized operator layouts.
+The renderer is therefore designed to remain usable with partially formed input, although the exact output for malformed expressions is implementation-defined.
 
 ## Input modes
 
-### Direct expression
+### Command-line argument
 
-Pass a single expression as the argument:
+A complete expression can be passed directly:
 
-```text
+```sh
 ./math-render '\frac{a}{b}'
 ```
 
-Using single quotes is recommended so the shell does not interpret backslashes or other special characters.
+Single quotes are recommended because they prevent the shell from interpreting backslashes and other characters.
 
 ### File input
 
-Put the expression in a file:
+Expressions can be stored in a file:
 
 ```text
 formula.tex
 ```
 
 ```text
-\sum_0^n \frac{a_k}{k!} + \int_0^x \frac{t^2}{1+t^2}
+\sum_0^n \frac{a_k}{k!}
 ```
 
-Then:
+and rendered with:
 
-```text
+```sh
 ./math-render -f formula.tex
 ```
 
 ### Standard input
 
-With no arguments, `math-render` reads from standard input:
+With no input file or expression argument, the program reads from standard input:
 
-```text
+```sh
 printf '%s\n' '\frac{a}{b}' | ./math-render
 ```
 
-This also allows it to be used in shell pipelines.
+This makes `math-render` suitable for shell pipelines and other command-line workflows.
 
 ## Architecture
 
-The renderer is organized into several stages:
+The implementation is divided into distinct stages:
 
 ```text
-Input
-  │
-  ▼
-Parser
-  │
-  ▼
-AST
-  │
-  ▼
-Layout
-  │
-  ▼
-Box tree
-  │
-  ▼
-Renderer
-  │
-  ▼
-Terminal
+                  ┌──────────────┐
+                  │    Input     │
+                  └──────┬───────┘
+                         │
+                         ▼
+                  ┌──────────────┐
+                  │    Lexer     │
+                  └──────┬───────┘
+                         │
+                         ▼
+                  ┌──────────────┐
+                  │    Parser    │
+                  └──────┬───────┘
+                         │
+                         ▼
+                  ┌──────────────┐
+                  │     AST      │
+                  └──────┬───────┘
+                         │
+                         ▼
+                  ┌──────────────┐
+                  │    Layout    │
+                  └──────┬───────┘
+                         │
+                         ▼
+                  ┌──────────────┐
+                  │     Box      │
+                  │    tree      │
+                  └──────┬───────┘
+                         │
+                         ▼
+                  ┌──────────────┐
+                  │   Renderer   │
+                  └──────┬───────┘
+                         │
+                         ▼
+                  ┌──────────────┐
+                  │   Terminal   │
+                  └──────────────┘
 ```
 
-The main components are:
+### Lexer
 
-| Component    | Responsibility                                       |
-| ------------ | ---------------------------------------------------- |
-| `parser.c`   | Parses the input expression                          |
-| `ast.c`      | Defines and manages the abstract syntax tree         |
-| `layout.c`   | Converts the AST into terminal-oriented layout boxes |
-| `renderer.c` | Renders the final layout                             |
-| `main.c`     | Handles input and coordinates the pipeline           |
+`lexer.c` converts the input stream into tokens.
 
-The separation between parsing, layout, and rendering allows multi-line mathematical structures such as fractions, roots, sums, and integrals to be composed recursively.
+The lexer is responsible for recognizing syntax-level elements such as:
 
-## Design
+* identifiers
+* digits
+* operators
+* commands
+* braces
+* parentheses
+* commas
+* script markers
+* whitespace
 
-`math-render` treats mathematical expressions as structured layouts rather than strings.
+The parser operates on these tokens rather than directly manipulating the input string.
 
-For example:
+### Parser
 
-```text
-\frac{a^2+b^2}{c}
-```
+`parser.c` converts the token stream into an AST.
 
-is represented structurally before being converted into terminal rows.
-
-This makes it possible to compose constructs such as:
+Parsing is recursive because expressions such as:
 
 ```text
 \sqrt{\frac{a^2+b^2}{c}}
 ```
 
+contain expressions nested inside other expressions.
+
+The parser also handles command-specific argument rules, scripts, groups, operators, and parser recovery for incomplete input.
+
+### AST
+
+`ast.c` contains the representation and memory management for the abstract syntax tree.
+
+The AST represents mathematical structure independently from terminal representation.
+
+Conceptually, an expression such as:
+
+```text
+\frac{a^2}{b}
+```
+
+is represented as a fraction containing two child expressions rather than as a preformatted string.
+
+This separation allows the same AST node to be rendered differently depending on its surrounding layout context.
+
+### Layout
+
+`layout.c` transforms AST nodes into terminal-oriented boxes.
+
+A box contains:
+
+* width
+* height
+* baseline information
+* a two-dimensional array of terminal cells
+
+Layout is recursive. A node first lays out its children and then combines their boxes according to the semantics of the construct.
+
+Examples:
+
+```text
+fraction
+├── numerator
+├── horizontal rule
+└── denominator
+```
+
+and:
+
+```text
+script
+├── base
+├── superscript
+└── subscript
+```
+
+This allows complex expressions to be composed without requiring dedicated rendering code for every possible combination.
+
+### Renderer
+
+`renderer.c` converts the final box into terminal output.
+
+The renderer is deliberately simple. Layout decisions are made before rendering, so the renderer does not need to understand mathematical semantics.
+
+The output is centered according to the terminal width when the output stream is attached to a terminal. A fallback width is used when the output is redirected or piped.
+
+## Layout model
+
+The core design principle is that mathematical expressions are **two-dimensional objects**, not strings.
+
+A normal text renderer can often concatenate strings:
+
+```text
+a + b
+```
+
+That model breaks down for expressions such as:
+
+```text
+  a
+  —
+  b
+```
+
 or:
+
+```text
+  n
+ ───
+ ╲
+ ╱⎽⎽
+  0
+```
+
+The layout engine therefore works with boxes that have explicit dimensions and a baseline.
+
+When boxes are combined horizontally, their baselines are aligned.
+
+When boxes are combined vertically, their dimensions are expanded to accommodate the required rows.
+
+This model allows structures such as:
 
 ```text
 \frac{\sum_0^n a_k}{n}
 ```
 
-without requiring each combination to have a dedicated rendering rule.
+to be constructed recursively from existing layout primitives.
 
-The layout system also tracks dimensions and baselines so that multi-line expressions can be combined with surrounding expressions.
+The same mechanism is used for nested fractions, roots, scripts, limits, products, sums, and integrals.
 
-## Current limitations
+## Unicode handling
 
-This is an early-stage renderer, not a full LaTeX implementation.
+The renderer relies heavily on Unicode because terminal output has no native concept of mathematical italic, superscript, subscript, or extensible mathematical operators.
 
-Notable limitations include:
+Where Unicode provides an appropriate mathematical character, the renderer uses it.
 
-* Only a subset of LaTeX-like commands is implemented.
-* Unknown commands fall back to textual output.
-* Unary minus does not yet have specialized mathematical spacing.
-* User whitespace is not preserved as literal terminal spacing in all cases.
-* Some mathematical operators such as `\prod` and `\lim` are not implemented as large operators.
-* Terminal rendering depends on Unicode glyphs and the terminal's font.
-* Unicode width and glyph appearance can vary between terminal environments.
-* The renderer is designed around terminal output rather than TeX-compatible typography.
+Examples include:
+
+```text
+𝑥
+𝑎
+𝑏
+𝑥²
+𝑥₁
+ℙ
+𝒳
+α
+∞
+≤
+→
+```
+
+For structures without a single suitable Unicode character, the renderer constructs the visual representation from multiple terminal characters.
+
+Examples include:
+
+* fractions
+* summations
+* products
+* integrals
+* roots
+* binomial coefficients
+* multi-row scripts
+
+Unicode terminal rendering has unavoidable environment-dependent behavior. Glyph width, font coverage, and visual alignment may differ between terminals and fonts.
+
+The layout engine therefore treats terminal cells as fixed columns while relying on the selected terminal font to provide compatible glyph metrics.
+
+## Error handling and parser recovery
+
+The parser is intentionally permissive.
+
+The renderer should remain usable when an expression is incomplete, for example while an expression is being edited or generated incrementally.
+
+Examples:
+
+```text
+x_
+x^
+\sqrt
+\frac{a}
+x\
+(a+b
+```
+
+Where possible, incomplete constructs are reduced to the valid portion of the expression instead of causing a crash.
+
+This behavior is part of the current parser design rather than an attempt to provide full LaTeX error diagnostics.
+
+## Project structure
+
+```text
+math-render/
+├── include/
+│   ├── ast.h
+│   ├── layout.h
+│   ├── lexer.h
+│   ├── parser.h
+│   └── renderer.h
+├── src/
+│   ├── ast.c
+│   ├── layout.c
+│   ├── lexer.c
+│   ├── main.c
+│   ├── parser.c
+│   └── renderer.c
+├── test_main.c
+├── Makefile
+└── build.sh
+```
+
+Generated build artifacts are stored under:
+
+```text
+build/
+```
+
+The main executable is generated at:
+
+```text
+./math-render
+```
+
+The sanitizer-enabled test executable is generated at:
+
+```text
+./build/test_main
+```
+
+## Building
+
+The project requires a C11-compatible compiler and standard POSIX terminal facilities.
+
+Build the renderer with:
+
+```sh
+make
+```
+
+The default compilation flags are:
+
+```text
+-std=c11
+-Wall
+-Wextra
+-Wpedantic
+-O2
+```
+
+Include files are located through:
+
+```text
+-Iinclude
+```
+
+The resulting executable is:
+
+```text
+./math-render
+```
+
+A clean rebuild can be performed with:
+
+```sh
+make clean
+make
+```
+
+The repository also provides:
+
+```sh
+./build.sh
+```
+
+which performs a clean build.
 
 ## Testing
 
-The project includes tests covering:
+The project includes a standalone test program covering both individual features and composed expressions.
 
-* basic identifiers
+Run the complete test suite with:
+
+```sh
+make test
+```
+
+Tests are compiled with:
+
+```text
+-std=c11
+-Wall
+-Wextra
+-Wpedantic
+-O2
+-fsanitize=address,undefined
+```
+
+The test binary is:
+
+```text
+build/test_main
+```
+
+and is executed automatically by `make test`.
+
+The test suite covers:
+
+* identifiers and Unicode mathematical italic
 * digits
+* mixed identifiers
+* whitespace handling
 * operators
+* chained operators
+* unary minus behavior
 * superscripts
 * subscripts
+* Unicode script conversion
+* grouped scripts
 * nested scripts
 * fractions
 * nested fractions
+* fractions containing scripts
+* fractions containing large operators
 * binomial coefficients
 * square roots
 * nested roots
-* summations
-* integrals
-* nested mathematical structures
-* grouping
+* roots containing fractions
+* summation
+* product
+* integral
+* limit
+* optional large-operator limits
+* compound limits
 * parentheses
+* grouping
+* incomplete delimiters
 * Greek letters
-* mathematical relations
+* relations
 * set and logic symbols
 * arrows
-* fallback behavior
-* multi-line baseline alignment
+* calculus symbols
+* ellipsis commands
+* blackboard bold
+* calligraphic characters
+* unknown-command fallback
+* empty input
+* malformed or incomplete commands
+* baseline alignment
+* multi-row expressions
+* nested multi-row expressions
 * wide expressions
-* large operators embedded inside other expressions
+* terminal centering
+* large operators embedded in larger expressions
 
-Example expressions include the quadratic formula:
+The tests also include composed mathematical expressions such as the quadratic formula, the binomial theorem, and expressions combining products, limits, fractions, and probability notation.
 
-```text
-x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}
+## Installation
+
+The executable can be installed into the user's local binary directory:
+
+```sh
+make install
 ```
 
-and the binomial theorem:
+This installs:
 
 ```text
-\binom{n}{k} = \frac{n!}{k!(n-k)!}
+~/.local/bin/math-render
 ```
 
-A larger layout test:
+To remove it:
 
-```text
-\sum_0^n \frac{a_k}{k!}
-+ \int_0^x \frac{t^2}{1+t^2}
-+ \sqrt{\frac{a^2+b^2}{c}}
-= \infty
+```sh
+make uninstall
 ```
 
-## Requirements
+## Current limitations
 
-A C compiler and a terminal with Unicode support are required.
+`math-render` implements a deliberately small subset of LaTeX-like mathematical syntax.
 
-The output uses Unicode mathematical characters and box-drawing or mathematical glyphs, so the selected terminal font must contain the required characters.
+Current limitations include:
 
-## Status
+* It is not a LaTeX parser.
+* Only explicitly implemented commands receive specialized semantics.
+* Unknown commands fall back to textual output.
+* Unary minus currently uses ordinary binary-operator spacing.
+* User whitespace is normalized according to the parser's tokenization and layout rules.
+* Unicode mathematical alphabets are limited by the characters defined by Unicode.
+* Unicode glyph widths and visual metrics depend on the terminal and font.
+* The renderer targets terminal cells rather than TeX's typography model.
+* Delimiter sizing is not equivalent to TeX's dynamic delimiter system.
+* Mathematical spacing is intentionally approximate.
+* Error reporting is minimal because the parser favors recovery over diagnostics.
+* The supported command set is intentionally much smaller than LaTeX.
 
-`math-render` is experimental software.
+These limitations are consequences of the project's scope rather than implementation goals that the renderer attempts to hide.
 
-The parser, AST, layout engine, and renderer are being developed together, with particular attention to recursive layout, baseline alignment, multi-line expressions, and robust terminal rendering.
+## Design goals
+
+The project currently prioritizes:
+
+1. **Structural representation**
+
+   Mathematical expressions should be represented as trees rather than preformatted strings.
+
+2. **Recursive composition**
+
+   Existing layout primitives should compose naturally inside other primitives.
+
+3. **Terminal-oriented rendering**
+
+   Layout decisions should account for fixed terminal rows and columns.
+
+4. **Explicit baseline management**
+
+   Multi-line expressions should align correctly when combined with adjacent expressions.
+
+5. **Unicode where appropriate**
+
+   Unicode mathematical characters should be used when they provide a compact representation.
+
+6. **Graceful handling of incomplete input**
+
+   Partially formed expressions should not cause crashes.
+
+7. **Small implementation surface**
+
+   The project intentionally avoids reproducing the complexity of a complete TeX engine.
+
+## Development
+
+The project is implemented in C11 and uses no external runtime libraries for parsing or layout.
+
+The primary dependencies are:
+
+* a C11 compiler
+* standard C library facilities
+* POSIX terminal interfaces
+* a Unicode-capable terminal/font
+
+The codebase is divided so that parser changes do not require the renderer to understand syntax, and renderer changes do not require the parser to understand terminal layout.
+
+This separation is particularly important for large mathematical structures, where the same AST node can be embedded in several different layout contexts.
+
+## License
+
+No license has been specified yet.
 
