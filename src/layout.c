@@ -299,12 +299,73 @@ static Box *fraction_box(Ast *node)
     return box;
 }
 
+static unsigned decode_one_codepoint(const char *text)
+{
+    if (!text || !text[0])
+        return 0;
+
+    unsigned char lead = (unsigned char) text[0];
+    size_t len = utf8_seq_len(lead);
+    unsigned cp;
+
+    switch (len) {
+    case 1:
+        cp = lead;
+        break;
+    case 2:
+        if ((text[1] & 0xC0) != 0x80) return 0;
+        cp = ((lead & 0x1F) << 6) | (text[1] & 0x3F);
+        break;
+    case 3:
+        if ((text[1] & 0xC0) != 0x80 || (text[2] & 0xC0) != 0x80) return 0;
+        cp = ((lead & 0x0F) << 12) | ((text[1] & 0x3F) << 6) | (text[2] & 0x3F);
+        break;
+    case 4:
+        if ((text[1] & 0xC0) != 0x80 || (text[2] & 0xC0) != 0x80 || (text[3] & 0xC0) != 0x80) return 0;
+        cp = ((lead & 0x07) << 18) | ((text[1] & 0x3F) << 12) | ((text[2] & 0x3F) << 6) | (text[3] & 0x3F);
+        break;
+    default:
+        return 0;
+    }
+
+    if (text[len] != '\0') /* sobrou mais coisa depois -- não é 1 char só */
+        return 0;
+
+    return cp;
+}
+
+static char italic_to_ascii_letter(const char *text)
+{
+    unsigned cp = decode_one_codepoint(text);
+
+    if (cp == 0)
+        return 0;
+
+    if (cp >= 0x1D434 && cp <= 0x1D44D)   /* Mathematical Italic Capital A-Z */
+        return (char) ('A' + (cp - 0x1D434));
+
+    if (cp >= 0x1D44E && cp <= 0x1D467)   /* Mathematical Italic Small a-z */
+        return (char) ('a' + (cp - 0x1D44E));
+
+    if (cp == 0x210E)                     /* itálico de "h" (Planck constant) */
+        return 'h';
+
+    return 0;
+}
+
 static const char *superscript_char(const char *text)
 {
-    if (!text || strlen(text) != 1)
+    char c;
+
+    if (!text)
         return NULL;
 
-    switch (text[0]) {
+    if (strlen(text) == 1)
+        c = text[0];
+    else if (!(c = italic_to_ascii_letter(text)))
+        return NULL;
+
+    switch (c) {
     case '0': return "⁰";
     case '1': return "¹";
     case '2': return "²";
@@ -412,10 +473,17 @@ static Box *superscript_box(Ast *node)
 
 static const char *subscript_char(const char *text)
 {
-    if (!text || strlen(text) != 1)
+    char c;
+
+    if (!text)
         return NULL;
 
-    switch (text[0]) {
+    if (strlen(text) == 1)
+        c = text[0];
+    else if (!(c = italic_to_ascii_letter(text)))
+        return NULL;
+
+    switch (c) {
     case '0': return "₀";
     case '1': return "₁";
     case '2': return "₂";
