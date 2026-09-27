@@ -41,7 +41,7 @@ static size_t sequence_gap(const Ast *left, const Ast *right)
 {
     size_t gap = 0;
 
-    if (left && (left->type == AST_SUM || left->type == AST_INT))
+	if (left && (left->type == AST_SUM || left->type == AST_INT || left->type == AST_PROD))
         gap = 2;
 
     if (is_single_char_operator(left) || is_single_char_operator(right))
@@ -792,6 +792,44 @@ static Box *integral_operator(void)
     return op;
 }
 
+
+static Box *product_operator(void)
+{
+    Box *op = box_create(3, 3);
+
+    box_set_glyph(op, 0, 0, "─");
+    box_set_glyph(op, 1, 0, "─");
+    box_set_glyph(op, 2, 0, "─");
+
+    box_set_glyph(op, 0, 1, "│");
+    box_set_glyph(op, 2, 1, "│");
+
+    box_set_glyph(op, 0, 2, "│");
+    box_set_glyph(op, 2, 2, "│");
+
+    op->baseline = 2;
+    op->axis = 2;
+
+    return op;
+}
+
+static Box *product_box(Ast *node)
+{
+    Box *op = product_operator();
+    Box *sub = node->left  ? layout(node->left)  : NULL;
+    Box *sup = node->right ? layout(node->right) : NULL;
+
+    return stack_limits(sup, op, sub);
+}
+
+static Box *lim_box(Ast *node)
+{
+    Box *op = text_box("lim");
+    Box *sub = node->left ? layout(node->left) : NULL;
+
+    return stack_limits(NULL, op, sub);
+}
+
 static Box *summation_box(Ast *node)
 {
     Box *op = summation_operator();
@@ -818,7 +856,6 @@ static Box *integral_box(Ast *node)
     return stack_limits(sup, op, sub);
 }
 
-
 static const LayoutFunc handlers[] = {
     [AST_TEXT]        = layout_ast_text,
     [AST_FRACTION]    = fraction_box,
@@ -829,6 +866,8 @@ static const LayoutFunc handlers[] = {
     [AST_SUM]         = summation_box,
     [AST_INT]         = integral_box,
     [AST_SQRT]        = sqrt_box,
+	[AST_PROD]        = product_box,
+    [AST_LIM]         = lim_box,
 };
 
 static const int HANDLERS_COUNT = sizeof(handlers) / sizeof(handlers[0]);

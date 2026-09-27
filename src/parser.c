@@ -55,7 +55,7 @@ static int is_bare_operator(const Ast *n)
 
 static int is_big_operator(AstType type)
 {
-    return type == AST_SUM || type == AST_INT;
+    return type == AST_SUM || type == AST_INT || type == AST_PROD;;
 }
 
 
@@ -93,7 +93,7 @@ static Ast *parse_term(Parser *parser)
             Ast *exponent = parse_atom(parser);
 
             if (exponent != NULL) {
-                if (is_big_operator(node->type)) {
+                if (is_big_operator(node->type) || node->type == AST_LIM) {
                     ast_free(node->right);
                     node->right = exponent;
                 } else {
@@ -111,7 +111,7 @@ static Ast *parse_term(Parser *parser)
             Ast *subscript = parse_atom(parser);
 
             if (subscript != NULL) {
-                if (is_big_operator(node->type)) {
+                if (is_big_operator(node->type) || node->type == AST_LIM) {
                     ast_free(node->left);
                     node->left = subscript;
                 } else {
@@ -127,6 +127,129 @@ static Ast *parse_term(Parser *parser)
 
     return node;
 }
+
+/* Generaliza math_italicize() pra qualquer tabela de substituição por
+ * letra -- usado por \mathbb e \mathcal, que trocam de "fonte" em vez
+ * de italicizar. */
+static char *math_style(const char *text, const char *(*style_letter)(char))
+{
+    size_t cap = strlen(text) * 4 + 1;
+    char *out = malloc(cap);
+    if (!out)
+        return NULL;
+
+    size_t o = 0;
+    for (const char *p = text; *p; p++) {
+        const char *rep = style_letter(*p);
+        if (rep) {
+            size_t n = strlen(rep);
+            memcpy(out + o, rep, n);
+            o += n;
+        } else {
+            out[o++] = *p;
+        }
+    }
+    out[o] = '\0';
+    return out;
+}
+
+static const char *mathbb_letter(char c)
+{
+    switch (c) {
+    case 'A': return "\U0001D538"; case 'B': return "\U0001D539";
+    case 'C': return "\u2102";     case 'D': return "\U0001D53B";
+    case 'E': return "\U0001D53C"; case 'F': return "\U0001D53D";
+    case 'G': return "\U0001D53E"; case 'H': return "\u210D";
+    case 'I': return "\U0001D540"; case 'J': return "\U0001D541";
+    case 'K': return "\U0001D542"; case 'L': return "\U0001D543";
+    case 'M': return "\U0001D544"; case 'N': return "\u2115";
+    case 'O': return "\U0001D546"; case 'P': return "\u2119";
+    case 'Q': return "\u211A";     case 'R': return "\u211D";
+    case 'S': return "\U0001D54A"; case 'T': return "\U0001D54B";
+    case 'U': return "\U0001D54C"; case 'V': return "\U0001D54D";
+    case 'W': return "\U0001D54E"; case 'X': return "\U0001D54F";
+    case 'Y': return "\U0001D550"; case 'Z': return "\u2124";
+
+    case 'a': return "\U0001D552"; case 'b': return "\U0001D553";
+    case 'c': return "\U0001D554"; case 'd': return "\U0001D555";
+    case 'e': return "\U0001D556"; case 'f': return "\U0001D557";
+    case 'g': return "\U0001D558"; case 'h': return "\U0001D559";
+    case 'i': return "\U0001D55A"; case 'j': return "\U0001D55B";
+    case 'k': return "\U0001D55C"; case 'l': return "\U0001D55D";
+    case 'm': return "\U0001D55E"; case 'n': return "\U0001D55F";
+    case 'o': return "\U0001D560"; case 'p': return "\U0001D561";
+    case 'q': return "\U0001D562"; case 'r': return "\U0001D563";
+    case 's': return "\U0001D564"; case 't': return "\U0001D565";
+    case 'u': return "\U0001D566"; case 'v': return "\U0001D567";
+    case 'w': return "\U0001D568"; case 'x': return "\U0001D569";
+    case 'y': return "\U0001D56A"; case 'z': return "\U0001D56B";
+
+    default: return NULL;
+    }
+}
+
+/* Script/calligraphic: convenção comum só cobre maiúsculas -- letra
+ * minúscula em \mathcal fica sem estilo (mesmo comportamento de
+ * dígito em math_italicize: passa direto). */
+static const char *mathcal_letter(char c)
+{
+    switch (c) {
+    case 'A': return "\U0001D49C"; case 'B': return "\u212C";
+    case 'C': return "\U0001D49E"; case 'D': return "\U0001D49F";
+    case 'E': return "\u2130";     case 'F': return "\u2131";
+    case 'G': return "\U0001D4A2"; case 'H': return "\u210B";
+    case 'I': return "\u2110";     case 'J': return "\U0001D4A5";
+    case 'K': return "\U0001D4A6"; case 'L': return "\u2112";
+    case 'M': return "\u2133";     case 'N': return "\U0001D4A9";
+    case 'O': return "\U0001D4AA"; case 'P': return "\U0001D4AB";
+    case 'Q': return "\U0001D4AC"; case 'R': return "\u211B";
+    case 'S': return "\U0001D4AE"; case 'T': return "\U0001D4AF";
+    case 'U': return "\U0001D4B0"; case 'V': return "\U0001D4B1";
+    case 'W': return "\U0001D4B2"; case 'X': return "\U0001D4B3";
+    case 'Y': return "\U0001D4B4"; case 'Z': return "\U0001D4B5";
+
+    default: return NULL;
+    }
+}
+
+/* Aceita tanto \mathbb{XYZ} quanto \mathbb X (um único átomo). Lê o
+ * texto BRUTO do token, antes de qualquer itálico. */
+static Ast *parse_styled(Parser *parser, const char *(*style_letter)(char))
+{
+    int braced = parser->current.type == TOKEN_LBRACE;
+
+    if (braced)
+        advance(parser);
+
+    if (parser->current.type != TOKEN_TEXT) {
+        if (braced && parser->current.type == TOKEN_RBRACE)
+            advance(parser);
+        return ast_text("");
+    }
+
+    char *styled = math_style(parser->current.value, style_letter);
+    Ast *node = ast_text(styled ? styled : parser->current.value);
+    free(styled);
+    advance(parser);
+
+    if (braced && parser->current.type == TOKEN_RBRACE)
+        advance(parser);
+
+    return node;
+}
+
+static Ast *parse_mathbb(Parser *parser)
+{
+    advance(parser); /* consome o próprio \mathbb */
+    return parse_styled(parser, mathbb_letter);
+}
+
+static Ast *parse_mathcal(Parser *parser)
+{
+    advance(parser); /* consome o próprio \mathcal */
+    return parse_styled(parser, mathcal_letter);
+}
+
 
 /* Bare letters in math mode are variables, and LaTeX renders variables
  * in italic by convention -- only multi-letter recognized function
@@ -317,6 +440,20 @@ static Ast *parse_int(Parser *parser)
     return ast_new(AST_INT);
 }
 
+static Ast *parse_prod(Parser *parser)
+{
+    advance(parser);
+
+    return ast_new(AST_PROD);
+}
+
+static Ast *parse_lim(Parser *parser)
+{
+    advance(parser);
+
+    return ast_new(AST_LIM);
+}
+
 static Ast *parse_symbol(Parser *parser, const char *value)
 {
     Ast *node = ast_text(value);
@@ -329,13 +466,15 @@ static const CommandRule command_rules[] = {
     // =========================================================
     // PARSED COMMANDS (Require logic to read arguments)
     // =========================================================
-    {"frac",       parse_frac,  NULL},
-    {"binom",      parse_binom, NULL},
-    {"sum",        parse_sum,   NULL},
-    {"int",        parse_int,   NULL},
-    {"sqrt",       parse_sqrt,  NULL},
-    // {"prod",       parse_prod,  NULL}, // Product (Π) - similar to sum
-    // {"lim",        parse_lim,   NULL}, // Limits (place text below lim)
+    {"frac",       parse_frac,		NULL},
+    {"binom",      parse_binom,		NULL},
+    {"sum",        parse_sum,		NULL},
+    {"int",        parse_int,		NULL},
+    {"sqrt",       parse_sqrt,		NULL},
+	{"mathbb",     parse_mathbb,	NULL},
+    {"mathcal",    parse_mathcal,	NULL},
+    {"prod",       parse_prod,  NULL}, // Product (Π) - similar to sum
+    {"lim",        parse_lim,   NULL}, // Limits (place text below lim)
     
     // =========================================================
     // GREEK LETTERS
