@@ -429,6 +429,14 @@ static const CommandRule command_rules[] = {
     {"ast",        NULL, "∗"}, // Asterisk operator
     {"angle",      NULL, "∠"}, // Angle
     {"hbar",       NULL, "ℏ"}, // Reduced Planck constant
+
+	{"le",         NULL, "≤"},
+    {"ge",         NULL, "≥"},
+    {"to",         NULL, "→"},
+    {"mid",        NULL, "|"},
+    {"dots",       NULL, "…"},
+    {"ldots",      NULL, "…"},
+    {"cdots",      NULL, "⋯"},
 };
 
 

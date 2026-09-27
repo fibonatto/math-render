@@ -38,6 +38,7 @@ static const int char_to_token[256] = {
     ['/'] = TOKEN_OPERATOR,
     ['<'] = TOKEN_OPERATOR,
     ['>'] = TOKEN_OPERATOR,
+	[','] = TOKEN_TEXT,
 };
 
 Token lexer_next(Lexer *lexer)
