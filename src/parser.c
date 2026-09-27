@@ -2,6 +2,7 @@
 #include "lexer.h"
 #include "ast.h"
 
+#include <ctype.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,6 +10,7 @@
 typedef struct {
     Lexer lexer;
     Token current;
+	int current_had_space;
 } Parser;
 
 typedef Ast *(*AtomParser)(Parser *);
@@ -27,7 +29,28 @@ typedef struct {
 
 static void advance(Parser *parser)
 {
+    unsigned char next_char =
+        (unsigned char) parser->lexer.input[parser->lexer.position];
+
+    parser->current_had_space = isspace(next_char) != 0;
+
     parser->current = lexer_next(&parser->lexer);
+}
+
+static int is_bare_operator(const Ast *n)
+{
+    if (!n || n->type != AST_TEXT || !n->text)
+        return 0;
+
+    if (n->text[0] == '\0' || n->text[1] != '\0')
+        return 0;
+
+    switch (n->text[0]) {
+    case '+': case '-': case '=': case '*': case '/': case '<': case '>':
+        return 1;
+    default:
+        return 0;
+    }
 }
 
 static int is_big_operator(AstType type)
@@ -462,7 +485,6 @@ static Ast *parse_atom(Parser *parser)
 //      * gets implemented later. */
 //     return type == AST_SUM || type == AST_INT;
 // }
-
 static Ast *parse_expression(Parser *parser)
 {
     Ast *sequence = ast_sequence();
@@ -472,6 +494,8 @@ static Ast *parse_expression(Parser *parser)
         parser->current.type != TOKEN_RBRACE &&
         parser->current.type != TOKEN_RPAREN
     ) {
+        int had_space = parser->current_had_space;
+
         Ast *node = parse_term(parser);
 
         if (!node) {
@@ -479,26 +503,6 @@ static Ast *parse_expression(Parser *parser)
             continue;
         }
 
-        /*
-         * A big operator and the term immediately following it
-         * form one mathematical block.
-         *
-         *     \sum_0^n \frac{a_k}{k!}
-         *
-         * becomes:
-         *
-         *     SEQUENCE
-         *     ├── SUM
-         *     └── FRACTION
-         *
-         * instead of:
-         *
-         *     SEQUENCE
-         *     ├── SUM
-         *     └── FRACTION
-         *
-         * being aligned directly against the rest of the expression.
-         */
         if (is_big_operator(node->type) &&
             starts_term(parser->current.type)) {
 
@@ -514,6 +518,13 @@ static Ast *parse_expression(Parser *parser)
             }
         }
 
+        if (had_space && sequence->child_count > 0) {
+            Ast *prev = sequence->children[sequence->child_count - 1];
+
+            if (!is_bare_operator(node) && !is_bare_operator(prev))
+                ast_add(sequence, ast_text(" "));
+        }
+
         ast_add(sequence, node);
     }
 
@@ -525,6 +536,7 @@ Ast *parse(const char *input)
     Parser parser;
 
     lexer_init(&parser.lexer, input);
+    parser.current_had_space = 0;
     parser.current = lexer_next(&parser.lexer);
 
     Ast *root = parse_expression(&parser);
