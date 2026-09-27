@@ -20,10 +20,6 @@ static size_t utf8_seq_len(unsigned char lead)
     return 1;
 }
 
-/* ------------------------------------------------------------------ */
-/* Box primitives                                                       */
-/* ------------------------------------------------------------------ */
-
 static int is_single_char_operator(const Ast *n)
 {
     if (!n || n->type != AST_TEXT || !n->text || n->text[0] == '\0' || n->text[1] != '\0')
@@ -57,97 +53,6 @@ static void cell_set_space(Cell *cell)
     cell->bytes[1] = '\0';
 }
 
-Box *box_create(size_t width, size_t height)
-{
-    Box *box = calloc(1, sizeof(Box));
-    if (!box)
-        return NULL;
-
-    box->width = width;
-    box->height = height;
-    box->baseline = 0;
-	box->axis = 0;
-
-    box->lines = calloc(height, sizeof(Cell *));
-    if (!box->lines) {
-        free(box);
-        return NULL;
-    }
-
-    for (size_t y = 0; y < height; y++) {
-        box->lines[y] = calloc(width, sizeof(Cell));
-        for (size_t x = 0; x < width; x++)
-            cell_set_space(&box->lines[y][x]);
-    }
-
-    return box;
-}
-
-void box_free(Box *box)
-{
-    if (!box)
-        return;
-
-    for (size_t i = 0; i < box->height; i++)
-        free(box->lines[i]);
-
-    free(box->lines);
-    free(box);
-}
-
-Box *text_box(const char *text)
-{
-    /* Pass 1: count codepoints, i.e. visual columns. This is the fix --
-     * the original code used strlen() (byte count) as the visual width,
-     * which is only correct for pure ASCII. Every multi-byte glyph in
-     * this renderer (\sum's "∑", the sub/superscript digits) made boxes
-     * wider than they actually are on screen, and every offset computed
-     * from that width inherited the error. */
-    size_t width = 0;
-    for (const char *p = text; *p; )
-        p += utf8_seq_len((unsigned char)*p), width++;
-
-    Box *box = box_create(width, 1);
-    if (!box)
-        return NULL;
-
-    size_t col = 0;
-    for (const char *p = text; *p; col++) {
-        size_t n = utf8_seq_len((unsigned char)*p);
-        if (n > sizeof(box->lines[0][col].bytes) - 1)
-            n = 1; /* defensive; never true for valid UTF-8 */
-        memcpy(box->lines[0][col].bytes, p, n);
-        box->lines[0][col].bytes[n] = '\0';
-        p += n;
-    }
-
-    box->baseline = 0;
-	box->axis = 0;
-    return box;
-}
-
-void put_box(Box *dst, const Box *src, size_t x, size_t y)
-{
-    /* Copying whole Cells (not raw bytes at a byte offset that used to
-     * assume "4 bytes per column") means this is correct regardless of
-     * how many bytes any given glyph encodes to, and it's now bounds
-     * checked -- the original had none, so a wide child box placed near
-     * a parent's right edge could write past the destination buffer. */
-    for (size_t row = 0; row < src->height; row++) {
-        size_t dst_y = y + row;
-        if (dst_y >= dst->height)
-            continue;
-
-        for (size_t colu = 0; colu < src->width; colu++) {
-            size_t dst_x = x + colu;
-            if (dst_x >= dst->width)
-                continue;
-
-            dst->lines[dst_y][dst_x] = src->lines[row][colu];
-        }
-    }
-}
-
 static void box_set_glyph(Box *box, size_t x, size_t y, const char *glyph)
 {
     if (x >= box->width || y >= box->height)
@@ -155,10 +60,6 @@ static void box_set_glyph(Box *box, size_t x, size_t y, const char *glyph)
     strncpy(box->lines[y][x].bytes, glyph, sizeof(box->lines[y][x].bytes) - 1);
     box->lines[y][x].bytes[sizeof(box->lines[y][x].bytes) - 1] = '\0';
 }
-
-/* ------------------------------------------------------------------ */
-/* Layout handlers                                                       */
-/* ------------------------------------------------------------------ */
 
 /* Stacks top/fill/bottom into a single-column Box `height` rows tall:
  * `top` at row 0, `bottom` at the last row, `fill` repeated for every
@@ -216,6 +117,7 @@ static Box *binom_box(Ast *node)
      * the bottom term starts (there, that row holds the divider bar;
      * here, it's the bottom term's own first row). */
     box->baseline = top->height;
+	box->axis = box->baseline;
 
     box_free(top);
     box_free(bottom);
@@ -249,6 +151,7 @@ static Box *sqrt_box(Ast *node)
     put_box(box, radicand, hook->width, 1);
 
     box->baseline = radicand->baseline + 1;
+	box->axis = radicand->axis + 1;
 
     box_free(radicand);
     box_free(hook);
@@ -871,6 +774,98 @@ static const LayoutFunc handlers[] = {
 };
 
 static const int HANDLERS_COUNT = sizeof(handlers) / sizeof(handlers[0]);
+
+
+Box *box_create(size_t width, size_t height)
+{
+    Box *box = calloc(1, sizeof(Box));
+    if (!box)
+        return NULL;
+
+    box->width = width;
+    box->height = height;
+    box->baseline = 0;
+	box->axis = 0;
+
+    box->lines = calloc(height, sizeof(Cell *));
+    if (!box->lines) {
+        free(box);
+        return NULL;
+    }
+
+    for (size_t y = 0; y < height; y++) {
+        box->lines[y] = calloc(width, sizeof(Cell));
+        for (size_t x = 0; x < width; x++)
+            cell_set_space(&box->lines[y][x]);
+    }
+
+    return box;
+}
+
+void box_free(Box *box)
+{
+    if (!box)
+        return;
+
+    for (size_t i = 0; i < box->height; i++)
+        free(box->lines[i]);
+
+    free(box->lines);
+    free(box);
+}
+
+Box *text_box(const char *text)
+{
+    /* Pass 1: count codepoints, i.e. visual columns. This is the fix --
+     * the original code used strlen() (byte count) as the visual width,
+     * which is only correct for pure ASCII. Every multi-byte glyph in
+     * this renderer (\sum's "∑", the sub/superscript digits) made boxes
+     * wider than they actually are on screen, and every offset computed
+     * from that width inherited the error. */
+    size_t width = 0;
+    for (const char *p = text; *p; )
+        p += utf8_seq_len((unsigned char)*p), width++;
+
+    Box *box = box_create(width, 1);
+    if (!box)
+        return NULL;
+
+    size_t col = 0;
+    for (const char *p = text; *p; col++) {
+        size_t n = utf8_seq_len((unsigned char)*p);
+        if (n > sizeof(box->lines[0][col].bytes) - 1)
+            n = 1; /* defensive; never true for valid UTF-8 */
+        memcpy(box->lines[0][col].bytes, p, n);
+        box->lines[0][col].bytes[n] = '\0';
+        p += n;
+    }
+
+    box->baseline = 0;
+	box->axis = 0;
+    return box;
+}
+
+void put_box(Box *dst, const Box *src, size_t x, size_t y)
+{
+    /* Copying whole Cells (not raw bytes at a byte offset that used to
+     * assume "4 bytes per column") means this is correct regardless of
+     * how many bytes any given glyph encodes to, and it's now bounds
+     * checked -- the original had none, so a wide child box placed near
+     * a parent's right edge could write past the destination buffer. */
+    for (size_t row = 0; row < src->height; row++) {
+        size_t dst_y = y + row;
+        if (dst_y >= dst->height)
+            continue;
+
+        for (size_t colu = 0; colu < src->width; colu++) {
+            size_t dst_x = x + colu;
+            if (dst_x >= dst->width)
+                continue;
+
+            dst->lines[dst_y][dst_x] = src->lines[row][colu];
+        }
+    }
+}
 
 Box *layout(Ast *node)
 {

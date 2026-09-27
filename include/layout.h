@@ -18,10 +18,18 @@ typedef struct Box {
 
 typedef Box *(*LayoutFunc)(Ast *node);
 
-Box *layout(Ast *node);
 Box *box_create(size_t width, size_t height);
 void box_free(Box *box);
-void put_box(Box *dst, const Box *src, size_t x, size_t y);
+
 Box *text_box(const char *text);
+
+void put_box(
+    Box *dst,
+    const Box *src,
+    size_t x,
+    size_t y
+);
+
+Box *layout(Ast *node);
 
 #endif
