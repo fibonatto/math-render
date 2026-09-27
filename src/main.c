@@ -11,7 +11,6 @@ static char *read_stdin(void)
 {
     size_t capacity = 4096;
     size_t length = 0;
-
     char *buffer = malloc(capacity);
 
     if (!buffer)
@@ -89,14 +88,16 @@ static char *read_file(const char *path)
 
 static void usage(const char *program)
 {
-    fprintf(stderr,
-            "usage:\n"
-            "  %s\n"
-            "  %s -f <file>\n"
-            "  %s <expression>\n",
-            program,
-            program,
-            program);
+    fprintf(
+        stderr,
+        "usage:\n"
+        "  %s\n"
+        "  %s -f <file>\n"
+        "  %s <expression>\n",
+        program,
+        program,
+        program
+    );
 }
 
 int main(int argc, char **argv)
@@ -128,8 +129,11 @@ int main(int argc, char **argv)
 
     if (!input) {
         if (argc >= 2 && strcmp(argv[1], "-f") == 0)
-            fprintf(stderr, "math-render: failed to read file '%s'\n",
-                    argc >= 3 ? argv[2] : "");
+            fprintf(
+                stderr,
+                "math-render: failed to read file '%s'\n",
+                argc >= 3 ? argv[2] : ""
+            );
         else
             fprintf(stderr, "math-render: failed to read input\n");
 

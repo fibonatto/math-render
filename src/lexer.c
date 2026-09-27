@@ -23,7 +23,6 @@ void lexer_init(Lexer *lexer, const char *input)
     lexer->position = 0;
 }
 
-// ASCII to TokenType mapping. Unmapped chars default to 0.
 static const int char_to_token[256] = {
     ['{'] = TOKEN_LBRACE,
     ['}'] = TOKEN_RBRACE,
@@ -38,58 +37,61 @@ static const int char_to_token[256] = {
     ['/'] = TOKEN_OPERATOR,
     ['<'] = TOKEN_OPERATOR,
     ['>'] = TOKEN_OPERATOR,
-	[','] = TOKEN_TEXT,
+    [','] = TOKEN_TEXT,
 };
 
 Token lexer_next(Lexer *lexer)
 {
     const char *input = lexer->input;
-    size_t *pos = &lexer->position;
+    size_t *position = &lexer->position;
 
-    while (isspace((unsigned char) input[*pos]))
-        (*pos)++;
+    while (isspace((unsigned char)input[*position]))
+        (*position)++;
 
-    unsigned char c = input[*pos];
+    unsigned char c = input[*position];
 
     if (!c)
-        return (Token) { TOKEN_EOF, NULL };
+        return (Token){ TOKEN_EOF, NULL };
 
-    // Handle commands
     if (c == '\\') {
-        size_t start = ++(*pos);
-        
-        while (isalpha((unsigned char) input[*pos]))
-            (*pos)++;
-            
-        return (Token) {
+        size_t start = ++(*position);
+
+        while (isalpha((unsigned char)input[*position]))
+            (*position)++;
+
+        return (Token){
             TOKEN_COMMAND,
-            copy_range(input + start, *pos - start)
+            copy_range(input + start, *position - start)
         };
     }
 
-    // Handle single-character tokens
     int token_type = char_to_token[c];
+
     if (token_type != 0) {
-        (*pos)++;
+        (*position)++;
+
         char value[2] = { c, '\0' };
-        return (Token) { token_type, strdup(value) };
+
+        return (Token){
+            token_type,
+            strdup(value)
+        };
     }
 
-    // Handle text tokens
-    size_t start = *pos;
-    
+    size_t start = *position;
+
     while (
-        input[*pos] &&
-        !isspace((unsigned char) input[*pos]) &&
-        input[*pos] != '\\' &&
-        !char_to_token[(unsigned char) input[*pos]]
+        input[*position] &&
+        !isspace((unsigned char)input[*position]) &&
+        input[*position] != '\\' &&
+        !char_to_token[(unsigned char)input[*position]]
     ) {
-        (*pos)++;
+        (*position)++;
     }
 
-    return (Token) {
+    return (Token){
         TOKEN_TEXT,
-        copy_range(input + start, *pos - start)
+        copy_range(input + start, *position - start)
     };
 }
 

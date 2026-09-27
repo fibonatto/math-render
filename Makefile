@@ -2,9 +2,10 @@ CC = cc
 
 CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -O2
 CPPFLAGS = -Iinclude
+SANITIZERS = -fsanitize=address,undefined
 
 TARGET = math-render
-# TARGET = build/math-render
+TEST_TARGET = build/test_main
 OBJDIR = build/obj
 
 SRC = \
@@ -14,6 +15,14 @@ SRC = \
 	src/ast.c \
 	src/layout.c \
 	src/renderer.c
+
+TEST_SRC = \
+	src/lexer.c \
+	src/parser.c \
+	src/ast.c \
+	src/layout.c \
+	src/renderer.c \
+	test_main.c
 
 OBJ = $(SRC:src/%.c=$(OBJDIR)/%.o)
 
@@ -26,6 +35,14 @@ $(OBJDIR)/%.o: src/%.c
 	@mkdir -p $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
+test: $(TEST_TARGET)
+	./$(TEST_TARGET)
+
+$(TEST_TARGET): $(TEST_SRC)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SANITIZERS) \
+		-o $@ $(TEST_SRC)
+
 clean:
 	rm -rf build
 
@@ -36,4 +53,4 @@ install: $(TARGET)
 uninstall:
 	rm -f $(HOME)/.local/bin/math-render
 
-.PHONY: all clean install uninstall
+.PHONY: all test clean install uninstall
