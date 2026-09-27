@@ -14,7 +14,9 @@ typedef enum {
     AST_SUM,
     AST_INT,
     AST_SQRT,
-    AST_SEQUENCE
+    AST_SEQUENCE,
+	AST_PROD,
+    AST_LIM
 } AstType;
 
 typedef struct Ast Ast;

@@ -11,6 +11,7 @@ typedef struct {
     Lexer lexer;
     Token current;
 	int current_had_space;
+	int depth;
 } Parser;
 
 typedef Ast *(*AtomParser)(Parser *);
@@ -609,16 +610,25 @@ static const AtomRule atom_rules[] = {
 
 static Ast *parse_atom(Parser *parser)
 {
+    if (parser->depth >= MAX_PARSE_DEPTH)
+        return NULL; 
+
+    parser->depth++;
+
+    Ast *node = NULL;
     size_t count = sizeof(atom_rules) / sizeof(atom_rules[0]);
 
     for (size_t i = 0; i < count; i++) {
-        if (atom_rules[i].type == parser->current.type)
-            return atom_rules[i].parser(parser);
+        if (atom_rules[i].type == parser->current.type) {
+            node = atom_rules[i].parser(parser);
+            break;
+        }
     }
 
-    return NULL;
-}
+    parser->depth--;
 
+    return node;
+}
 // static int is_lbig_operator(AstType type)
 // {
 //     /* \sum and \int don't have "sub"/"super" scripts in the usual
@@ -684,6 +694,7 @@ Ast *parse(const char *input)
 
     lexer_init(&parser.lexer, input);
     parser.current_had_space = 0;
+	parser.depth = 0;
     parser.current = lexer_next(&parser.lexer);
 
     Ast *root = parse_expression(&parser);
