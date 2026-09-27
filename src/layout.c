@@ -13,11 +13,11 @@
  * forward progress instead of looping forever on malformed input. */
 static size_t utf8_seq_len(unsigned char lead)
 {
-    if ((lead & 0x81) == 0x00) return 1;   /* 0xxxxxxx */
-    if ((lead & 0xE1) == 0xC0) return 2;   /* 110xxxxx */
-    if ((lead & 0xF1) == 0xE0) return 3;   /* 1110xxxx */
-    if ((lead & 0xF9) == 0xF0) return 4;   /* 11110xxx */
-    return 2;
+    if ((lead & 0x80) == 0x00) return 1; /* 0xxxxxxx */
+    if ((lead & 0xE0) == 0xC0) return 2; /* 110xxxxx */
+    if ((lead & 0xF0) == 0xE0) return 3; /* 1110xxxx */
+    if ((lead & 0xF8) == 0xF0) return 4; /* 11110xxx */
+    return 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -39,6 +39,7 @@ Box *box_create(size_t width, size_t height)
     box->width = width;
     box->height = height;
     box->baseline = 0;
+	box->axis = 0;
 
     box->lines = calloc(height, sizeof(Cell *));
     if (!box->lines) {
@@ -94,6 +95,7 @@ Box *text_box(const char *text)
     }
 
     box->baseline = 0;
+	box->axis = 0;
     return box;
 }
 
@@ -204,13 +206,17 @@ static Box *sqrt_box(Ast *node)
     Box *hook = stretch_glyph("/", "│", "√", radicand->height);
 
     size_t width = hook->width + radicand->width;
-    size_t height = radicand->height + 1; /* +1 for the vinculum */
+    size_t height = radicand->height + 1;
 
     Box *box = box_create(width, height);
+    if (!box) {
+        box_free(radicand);
+        box_free(hook);
+        return NULL;
+    }
 
-    /* Vinculum: the bar spans the radicand only, not the hook. */
     for (size_t x = hook->width; x < width; x++)
-        box_set_glyph(box, x, 0, "_");
+        box_set_glyph(box, x, 0, "─");
 
     put_box(box, hook, 0, 1);
     put_box(box, radicand, hook->width, 1);
@@ -228,13 +234,24 @@ static Box *fraction_box(Ast *node)
     Box *top = layout(node->left);
     Box *bottom = layout(node->right);
 
-    size_t width = top->width > bottom->width ? top->width : bottom->width;
+    size_t width = top->width > bottom->width
+        ? top->width
+        : bottom->width;
+
     if (width < 1)
         width = 1;
 
-    size_t height = top->height + 1 + bottom->height;
+    size_t above = top->height;
+    size_t below = bottom->height;
+
+    size_t height = above + 1 + below;
 
     Box *box = box_create(width, height);
+    if (!box) {
+        box_free(top);
+        box_free(bottom);
+        return NULL;
+    }
 
     size_t top_x = (width - top->width) / 2;
     size_t bottom_x = (width - bottom->width) / 2;
@@ -242,11 +259,12 @@ static Box *fraction_box(Ast *node)
     put_box(box, top, top_x, 0);
 
     for (size_t x = 0; x < width; x++)
-        box_set_glyph(box, x, top->height, "—");
+        box_set_glyph(box, x, above, "—");
 
-    put_box(box, bottom, bottom_x, top->height + 1);
+    put_box(box, bottom, bottom_x, above + 1);
 
-    box->baseline = top->height + 1;
+    box->baseline = above + 1 + bottom->baseline;
+    box->axis = above;
 
     box_free(top);
     box_free(bottom);
@@ -318,12 +336,27 @@ static Box *superscript_box(Ast *node)
         Box *base = layout(node->left);
         Box *power = text_box(sup);
 
-        Box *box = box_create(base->width + power->width, base->height);
+        size_t width = base->width + power->width;
 
-        put_box(box, base, 0, 0);
-        put_box(box, power, base->width, 0);
+        /*
+         * Keep the base where it was. The superscript occupies the
+         * upper part of the box.
+         */
+        size_t height = base->height;
+        if (power->height > 1)
+            height += power->height - 1;
 
-        box->baseline = base->baseline;
+        Box *box = box_create(width, height);
+
+        size_t power_y = 0;
+        size_t base_y = power->height > 1
+            ? power->height - 1
+            : 0;
+
+        put_box(box, power, base->width, power_y);
+        put_box(box, base, 0, base_y);
+
+        box->baseline = base_y + base->baseline;
 
         box_free(base);
         box_free(power);
@@ -339,10 +372,10 @@ static Box *superscript_box(Ast *node)
 
     Box *box = box_create(width, height);
 
-    put_box(box, base, 0, power->height);
     put_box(box, power, base->width, 0);
+    put_box(box, base, 0, power->height);
 
-    box->baseline = base->baseline + power->height;
+    box->baseline = power->height + base->baseline;
 
     box_free(base);
     box_free(power);
@@ -405,16 +438,23 @@ static Box *subscript_box(Ast *node)
         Box *base = layout(node->left);
         Box *power = text_box(sub);
 
-        Box *box = box_create(base->width + power->width, base->height);
+        size_t width = base->width + power->width;
+        size_t height = base->height;
 
-        /* Subscript goes on the base's BOTTOM row, not row 0. For a
-         * 1-row base (plain letters/digits) those are the same row, so
-         * this looked right for years -- it only broke once a base
-         * (the \sum operator) got taller than 1 row. */
-        size_t sub_row = base->height - 1;
+        if (power->height > 1)
+            height += power->height - 1;
+
+        Box *box = box_create(width, height);
 
         put_box(box, base, 0, 0);
-        put_box(box, power, base->width, sub_row);
+
+        /*
+         * Put the subscript on the bottom row while preserving the
+         * original baseline of the base.
+         */
+        size_t sub_y = base->height - 1;
+
+        put_box(box, power, base->width, sub_y);
 
         box->baseline = base->baseline;
 
@@ -449,6 +489,8 @@ static Box *sequence_box(Ast *node)
         return text_box("");
 
     Box **boxes = calloc(node->child_count, sizeof(Box *));
+    if (!boxes)
+        return NULL;
 
     size_t width = 0;
     size_t above = 0;
@@ -457,13 +499,23 @@ static Box *sequence_box(Ast *node)
     for (size_t i = 0; i < node->child_count; i++) {
         boxes[i] = layout(node->children[i]);
 
+        if (!boxes[i]) {
+            for (size_t j = 0; j < i; j++)
+                box_free(boxes[j]);
+
+            free(boxes);
+            return NULL;
+        }
+
         width += boxes[i]->width;
 
-        size_t box_above = boxes[i]->baseline;
-        size_t box_below = boxes[i]->height - boxes[i]->baseline - 1;
+        size_t box_above = boxes[i]->axis;
+        size_t box_below =
+            boxes[i]->height - boxes[i]->axis - 1;
 
         if (box_above > above)
             above = box_above;
+
         if (box_below > below)
             below = box_below;
     }
@@ -471,11 +523,18 @@ static Box *sequence_box(Ast *node)
     size_t height = above + 1 + below;
 
     Box *box = box_create(width, height);
+    if (!box) {
+        for (size_t i = 0; i < node->child_count; i++)
+            box_free(boxes[i]);
+
+        free(boxes);
+        return NULL;
+    }
 
     size_t x = 0;
 
     for (size_t i = 0; i < node->child_count; i++) {
-        size_t y = above - boxes[i]->baseline;
+        size_t y = above - boxes[i]->axis;
 
         put_box(box, boxes[i], x, y);
 
@@ -486,7 +545,18 @@ static Box *sequence_box(Ast *node)
 
     free(boxes);
 
+    /*
+     * The sequence's own mathematical axis is the same
+     * horizontal line used to align all of its children.
+     *
+     * This is especially important for nested sequences such as:
+     *
+     *     SEQUENCE
+     *     ├── SUM
+     *     └── FRACTION
+     */
     box->baseline = above;
+    box->axis = above;
 
     return box;
 }
@@ -508,35 +578,69 @@ static Box *layout_ast_text(Ast *node) { return text_box(node->text); }
 static Box *stack_limits(Box *sup, Box *op, Box *sub)
 {
     size_t width = op->width;
-    if (sup && sup->width > width) width = sup->width;
-    if (sub && sub->width > width) width = sub->width;
+
+    if (sup && sup->width > width)
+        width = sup->width;
+
+    if (sub && sub->width > width)
+        width = sub->width;
 
     size_t height = op->height;
-    if (sup) height += sup->height;
-    if (sub) height += sub->height;
+
+    if (sup)
+        height += sup->height;
+
+    if (sub)
+        height += sub->height;
 
     Box *box = box_create(width, height);
+    if (!box) {
+        box_free(sup);
+        box_free(op);
+        box_free(sub);
+        return NULL;
+    }
 
     size_t y = 0;
 
     if (sup) {
-        put_box(box, sup, (width - sup->width) / 2, y);
+        put_box(
+            box,
+            sup,
+            (width - sup->width) / 2,
+            y
+        );
+
         y += sup->height;
         box_free(sup);
     }
 
-    put_box(box, op, (width - op->width) / 2, y);
+    put_box(
+        box,
+        op,
+        (width - op->width) / 2,
+        y
+    );
+
     box->baseline = y + op->baseline;
+    box->axis = y + op->axis;
+
     y += op->height;
     box_free(op);
 
-    if (sub)
-        put_box(box, sub, (width - sub->width) / 2, y);
-    box_free(sub);
+    if (sub) {
+        put_box(
+            box,
+            sub,
+            (width - sub->width) / 2,
+            y
+        );
+
+        box_free(sub);
+    }
 
     return box;
 }
-
 /* Hand-drawn multi-row operators, built entirely from ASCII and common
  * box-drawing characters so nothing depends on a font's handling of
  * rare math-extension glyphs (which is what made the earlier ⎲/⎳
@@ -555,41 +659,61 @@ static Box *stack_limits(Box *sup, Box *op, Box *sub)
 static Box *summation_operator(void)
 {
     Box *op = box_create(3, 3);
+
     box_set_glyph(op, 0, 0, "─");
     box_set_glyph(op, 1, 0, "─");
     box_set_glyph(op, 2, 0, "─");
+
     box_set_glyph(op, 0, 1, "╲");
+
     box_set_glyph(op, 0, 2, "╱");
     box_set_glyph(op, 1, 2, "⎽");
     box_set_glyph(op, 2, 2, "⎽");
-    op->baseline = 1;
+
+    op->baseline = 2;
+    op->axis = 2;
+
     return op;
 }
 
 static Box *integral_operator(void)
 {
     Box *op = box_create(1, 4);
+
     box_set_glyph(op, 0, 0, "⌠");
     box_set_glyph(op, 0, 1, "|");
     box_set_glyph(op, 0, 2, "|");
     box_set_glyph(op, 0, 3, "⌡");
+
     op->baseline = 2;
+    op->axis = 2;
+
     return op;
 }
 
 static Box *summation_box(Ast *node)
 {
     Box *op = summation_operator();
-    Box *sub = node->left  ? layout(node->left)  : NULL;
-    Box *sup = node->right ? layout(node->right) : NULL;
+    Box *sub = node->left
+        ? layout(node->left)
+        : NULL;
+    Box *sup = node->right
+        ? layout(node->right)
+        : NULL;
+
     return stack_limits(sup, op, sub);
 }
 
 static Box *integral_box(Ast *node)
 {
     Box *op = integral_operator();
-    Box *sub = node->left  ? layout(node->left)  : NULL;
-    Box *sup = node->right ? layout(node->right) : NULL;
+    Box *sub = node->left
+        ? layout(node->left)
+        : NULL;
+    Box *sup = node->right
+        ? layout(node->right)
+        : NULL;
+
     return stack_limits(sup, op, sub);
 }
 

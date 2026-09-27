@@ -1,7 +1,9 @@
 #include "parser.h"
 #include "lexer.h"
+#include "ast.h"
 
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -25,16 +27,155 @@ typedef struct {
 
 static void advance(Parser *parser)
 {
-    token_free(&parser->current);
     parser->current = lexer_next(&parser->lexer);
 }
+
+static int is_big_operator(AstType type)
+{
+    return type == AST_SUM || type == AST_INT;
+}
+
 
 static Ast *parse_expression(Parser *parser);
 static Ast *parse_atom(Parser *parser);
 
+
+static int starts_term(TokenType type)
+{
+    switch (type) {
+    case TOKEN_TEXT:
+    case TOKEN_COMMAND:
+    case TOKEN_LBRACE:
+    case TOKEN_LPAREN:
+        return 1;
+
+    default:
+        return 0;
+    }
+}
+
+static Ast *parse_term(Parser *parser)
+{
+    Ast *node = parse_atom(parser);
+
+    if (!node)
+        return NULL;
+
+    while (parser->current.type == TOKEN_CARET ||
+           parser->current.type == TOKEN_UNDERSCORE) {
+
+        if (parser->current.type == TOKEN_CARET) {
+            advance(parser);
+
+            Ast *exponent = parse_atom(parser);
+
+            if (exponent != NULL) {
+                if (is_big_operator(node->type)) {
+                    ast_free(node->right);
+                    node->right = exponent;
+                } else {
+                    node = ast_binary(
+                        AST_SUPERSCRIPT,
+                        node,
+                        exponent
+                    );
+                }
+            }
+
+        } else if (parser->current.type == TOKEN_UNDERSCORE) {
+            advance(parser);
+
+            Ast *subscript = parse_atom(parser);
+
+            if (subscript != NULL) {
+                if (is_big_operator(node->type)) {
+                    ast_free(node->left);
+                    node->left = subscript;
+                } else {
+                    node = ast_binary(
+                        AST_SUBSCRIPT,
+                        node,
+                        subscript
+                    );
+                }
+            }
+        }
+    }
+
+    return node;
+}
+
+/* Bare letters in math mode are variables, and LaTeX renders variables
+ * in italic by convention -- only multi-letter recognized function
+ * names (\sin, \log, ...) stay upright, and this parser doesn't have
+ * those yet, so for now every lone Latin letter gets italicized.
+ * Digits and everything else pass through unchanged. */
+static const char *math_italic_letter(char c)
+{
+    switch (c) {
+    case 'A': return "\U0001D434"; case 'B': return "\U0001D435";
+    case 'C': return "\U0001D436"; case 'D': return "\U0001D437";
+    case 'E': return "\U0001D438"; case 'F': return "\U0001D439";
+    case 'G': return "\U0001D43A"; case 'H': return "\U0001D43B";
+    case 'I': return "\U0001D43C"; case 'J': return "\U0001D43D";
+    case 'K': return "\U0001D43E"; case 'L': return "\U0001D43F";
+    case 'M': return "\U0001D440"; case 'N': return "\U0001D441";
+    case 'O': return "\U0001D442"; case 'P': return "\U0001D443";
+    case 'Q': return "\U0001D444"; case 'R': return "\U0001D445";
+    case 'S': return "\U0001D446"; case 'T': return "\U0001D447";
+    case 'U': return "\U0001D448"; case 'V': return "\U0001D449";
+    case 'W': return "\U0001D44A"; case 'X': return "\U0001D44B";
+    case 'Y': return "\U0001D44C"; case 'Z': return "\U0001D44D";
+
+    case 'a': return "\U0001D44E"; case 'b': return "\U0001D44F";
+    case 'c': return "\U0001D450"; case 'd': return "\U0001D451";
+    case 'e': return "\U0001D452"; case 'f': return "\U0001D453";
+    case 'g': return "\U0001D454";
+    /* U+1D455 is an unassigned gap in the Unicode block -- italic
+     * lowercase h is U+210E (PLANCK CONSTANT) instead, by convention. */
+    case 'h': return "\u210E";
+    case 'i': return "\U0001D456"; case 'j': return "\U0001D457";
+    case 'k': return "\U0001D458"; case 'l': return "\U0001D459";
+    case 'm': return "\U0001D45A"; case 'n': return "\U0001D45B";
+    case 'o': return "\U0001D45C"; case 'p': return "\U0001D45D";
+    case 'q': return "\U0001D45E"; case 'r': return "\U0001D45F";
+    case 's': return "\U0001D460"; case 't': return "\U0001D461";
+    case 'u': return "\U0001D462"; case 'v': return "\U0001D463";
+    case 'w': return "\U0001D464"; case 'x': return "\U0001D465";
+    case 'y': return "\U0001D466"; case 'z': return "\U0001D467";
+
+    default: return NULL;
+    }
+}
+
+static char *math_italicize(const char *text)
+{
+    /* Worst case every input byte becomes a 4-byte glyph. */
+    size_t cap = strlen(text) * 4 + 1;
+    char *out = malloc(cap);
+    if (!out)
+        return NULL;
+
+    size_t o = 0;
+    for (const char *p = text; *p; p++) {
+        const char *rep = math_italic_letter(*p);
+        if (rep) {
+            size_t n = strlen(rep);
+            memcpy(out + o, rep, n);
+            o += n;
+        } else {
+            out[o++] = *p;
+        }
+    }
+    out[o] = '\0';
+    return out;
+}
+
 static Ast *parse_text(Parser *parser)
 {
-    Ast *node = ast_text(parser->current.value);
+    char *italic = math_italicize(parser->current.value);
+    Ast *node = ast_text(italic ? italic : parser->current.value);
+    free(italic);
     advance(parser);
 
     return node;
@@ -308,19 +449,19 @@ static Ast *parse_atom(Parser *parser)
     return NULL;
 }
 
-static int is_big_operator(AstType type)
-{
-    /* \sum and \int don't have "sub"/"super" scripts in the usual
-     * sense -- \sum_a^b attaches a lower and an upper *limit* to the
-     * operator itself, and needs to render centered above/below it
-     * (layout.c's stack_limits), not corner-offset like x_i or x^2.
-     * So when the thing that just got parsed IS one of these bare
-     * operators, a following _/^ fills its own left/right (lower/upper
-     * limit) instead of wrapping it in a generic AST_SUBSCRIPT/
-     * AST_SUPERSCRIPT node. Add AST_PROD (or similar) here too if it
-     * gets implemented later. */
-    return type == AST_SUM || type == AST_INT;
-}
+// static int is_lbig_operator(AstType type)
+// {
+//     /* \sum and \int don't have "sub"/"super" scripts in the usual
+//      * sense -- \sum_a^b attaches a lower and an upper *limit* to the
+//      * operator itself, and needs to render centered above/below it
+//      * (layout.c's stack_limits), not corner-offset like x_i or x^2.
+//      * So when the thing that just got parsed IS one of these bare
+//      * operators, a following _/^ fills its own left/right (lower/upper
+//      * limit) instead of wrapping it in a generic AST_SUBSCRIPT/
+//      * AST_SUPERSCRIPT node. Add AST_PROD (or similar) here too if it
+//      * gets implemented later. */
+//     return type == AST_SUM || type == AST_INT;
+// }
 
 static Ast *parse_expression(Parser *parser)
 {
@@ -331,49 +472,45 @@ static Ast *parse_expression(Parser *parser)
         parser->current.type != TOKEN_RBRACE &&
         parser->current.type != TOKEN_RPAREN
     ) {
-        Ast *node = parse_atom(parser);
+        Ast *node = parse_term(parser);
 
         if (!node) {
             advance(parser);
             continue;
         }
 
-        while (parser->current.type == TOKEN_CARET ||
-               parser->current.type == TOKEN_UNDERSCORE) {
-            if (parser->current.type == TOKEN_CARET) {
-                advance(parser);
+        /*
+         * A big operator and the term immediately following it
+         * form one mathematical block.
+         *
+         *     \sum_0^n \frac{a_k}{k!}
+         *
+         * becomes:
+         *
+         *     SEQUENCE
+         *     ├── SUM
+         *     └── FRACTION
+         *
+         * instead of:
+         *
+         *     SEQUENCE
+         *     ├── SUM
+         *     └── FRACTION
+         *
+         * being aligned directly against the rest of the expression.
+         */
+        if (is_big_operator(node->type) &&
+            starts_term(parser->current.type)) {
 
-                Ast *exponent = parse_atom(parser);
+            Ast *term = parse_term(parser);
 
-                if (exponent != NULL) {
-                    if (is_big_operator(node->type)) {
-                        ast_free(node->right); /* NULL first time; no-op */
-                        node->right = exponent;
-                    } else {
-                        node = ast_binary(
-                            AST_SUPERSCRIPT,
-                            node,
-                            exponent
-                        );
-                    }
-                }
-            } else if (parser->current.type == TOKEN_UNDERSCORE) {
-                advance(parser);
+            if (term != NULL) {
+                Ast *block = ast_sequence();
 
-                Ast *subscript = parse_atom(parser);
+                ast_add(block, node);
+                ast_add(block, term);
 
-                if (subscript != NULL) {
-                    if (is_big_operator(node->type)) {
-                        ast_free(node->left);
-                        node->left = subscript;
-                    } else {
-                        node = ast_binary(
-                            AST_SUBSCRIPT,
-                            node,
-                            subscript
-                        );
-                    }
-                }
+                node = block;
             }
         }
 

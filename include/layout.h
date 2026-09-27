@@ -13,6 +13,7 @@ typedef struct Box {
     size_t width;     /* width in terminal columns (NOT bytes)          */
     size_t height;     /* number of rows                                 */
     size_t baseline;   /* row that aligns with the surrounding text      */
+	size_t axis;
 } Box;
 
 typedef Box *(*LayoutFunc)(Ast *node);
